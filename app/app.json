@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "FuneralPrice Compare",
+    "slug": "funeralprice-compare",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.anonymous.funeralpricecompare"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "react-native-maps",
+        {
+          "androidGoogleMapsApiKey": "AIzaSyAx_YdFhptqbS_-TRHreJ4vxb8smhSS81A",
+          "iosGoogleMapsApiKey": "AIzaSyAx_YdFhptqbS_-TRHreJ4vxb8smhSS81A"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f3b97d26-8147-49b7-9407-ac7fdb9c5221"
+      }
+    },
+    "owner": "jasonbhous-team"
+  }
+}
