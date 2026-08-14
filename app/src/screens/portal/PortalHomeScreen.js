@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, Platform } from "react-native";
 import { useAppState } from "../../context/AppState";
 import { api } from "../../api";
 import { colors, spacing } from "../../theme";
@@ -72,7 +72,12 @@ export default function PortalHomeScreen({ navigation }) {
         </Pressable>
       </View>
 
-      <View style={{ flex: 1, padding: spacing.lg }}>
+      <View
+        style={[
+          { flex: 1, width: "100%", padding: spacing.lg },
+          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
+        ]}
+      >
         {view === "dashboard" && <PortalDashboard token={providerToken} />}
 
         {view === "locations" && <PortalLocations token={providerToken} />}

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, Platform } from "react-native";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing } from "../../theme";
 import AdminOrganizations from "./AdminOrganizations";
@@ -57,7 +57,12 @@ export default function AdminHomeScreen({ navigation }) {
         </Pressable>
       </View>
 
-      <View style={{ flex: 1, padding: spacing.lg }}>
+      <View
+        style={[
+          { flex: 1, width: "100%", padding: spacing.lg },
+          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
+        ]}
+      >
         {view === "orgs" && <AdminOrganizations token={adminToken} />}
         {view === "moderation" && <AdminModeration token={adminToken} />}
         {view === "taxonomy" && <AdminTaxonomy token={adminToken} />}
