@@ -54,15 +54,19 @@ export default function PortalLeads({ token, onSelect, refreshKey }) {
   return (
     <View style={{ flex: 1 }}>
       <Text style={[type.h3, { marginBottom: spacing.sm }]}>Leads</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-        {STATUS_OPTIONS.map((opt) => (
-          <Chip key={opt.label} label={opt.label} active={status === opt.id} onPress={() => setStatus(opt.id)} />
-        ))}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4, flexGrow: 0, flexShrink: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          {STATUS_OPTIONS.map((opt) => (
+            <Chip key={opt.label} label={opt.label} active={status === opt.id} onPress={() => setStatus(opt.id)} />
+          ))}
+        </View>
       </ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.md }}>
-        {NEED_OPTIONS.map((opt) => (
-          <Chip key={opt.label} label={opt.label} active={needType === opt.id} onPress={() => setNeedType(opt.id)} />
-        ))}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.md, flexGrow: 0, flexShrink: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          {NEED_OPTIONS.map((opt) => (
+            <Chip key={opt.label} label={opt.label} active={needType === opt.id} onPress={() => setNeedType(opt.id)} />
+          ))}
+        </View>
       </ScrollView>
 
       {!leads ? (

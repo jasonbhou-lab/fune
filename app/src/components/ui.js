@@ -1,9 +1,28 @@
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, Platform } from "react-native";
 import { colors, spacing } from "../theme";
 
+// react-navigation's native-stack renders each screen as a viewport-fixed
+// overlay on web (a react-native-screens quirk that ignores any width
+// constraint applied above it), so the "narrow, centered on web" layout has
+// to be applied inside each screen's own content rather than around the
+// navigator. This outer/inner split gives every Screen user that for free:
+// the outer view fills the real (full-viewport) box react-navigation hands
+// it, and the inner one is the actual constrained, centered column.
 export function Screen({ children, style }) {
-  return <View style={[{ flex: 1, backgroundColor: colors.bg, padding: spacing.lg }, style]}>{children}</View>;
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <View
+        style={[
+          { flex: 1, width: "100%", padding: spacing.lg },
+          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
+          style,
+        ]}
+      >
+        {children}
+      </View>
+    </View>
+  );
 }
 
 export function Card({ children, style }) {
@@ -60,10 +79,10 @@ export function Badge({ label, tone = "ok" }) {
   );
 }
 
-export function TextField({ label, value, onChangeText, placeholder, error, keyboardType, secureTextEntry, autoCapitalize, multiline, numberOfLines }) {
+export function TextField({ label, value, onChangeText, placeholder, error, keyboardType, secureTextEntry, autoCapitalize, multiline, numberOfLines, labelColor }) {
   return (
     <View style={{ marginBottom: spacing.md }}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldLabel, labelColor && { color: labelColor }]}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}

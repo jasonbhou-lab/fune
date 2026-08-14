@@ -22,7 +22,7 @@ export default function WelcomeScreen({ navigation }) {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-        <Text style={type.display}>FuneralPrice Compare</Text>
+        <Text style={type.display}>GLP</Text>
         <Text style={[type.caption, { marginTop: 4, marginBottom: spacing.xl }]}>Compare with clarity.</Text>
 
         <TextField label="ZIP or city" value={zip} onChangeText={setZip} placeholder="77494" keyboardType="number-pad" />
