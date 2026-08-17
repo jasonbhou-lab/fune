@@ -57,7 +57,34 @@ jobs:
 
       - name: Build static web bundle
         working-directory: app
-        run: npm run build
+        env:
+          # Hostinger's Git tool clones into a SUBFOLDER of the document root,
+          # so the site is served from e.g. https://example.com/glp/. An Expo
+          # export writes absolute asset URLs, which would resolve against the
+          # domain root and 404 — a blank white page. app.config.js turns this
+          # into experiments.baseUrl so those URLs carry the subpath.
+          #
+          # Set the repository variable WEB_BASE_PATH (Settings > Secrets and
+          # variables > Actions > Variables) to the subfolder name, e.g. "/glp".
+          # It is not a secret, which is why it is a variable rather than one.
+          # Leave it unset only if the site is ever served from the domain root.
+          WEB_BASE_PATH: ${{ vars.WEB_BASE_PATH }}
+        run: |
+          if [ -z "${WEB_BASE_PATH:-}" ]; then
+            echo "::warning::WEB_BASE_PATH is not set — building for the domain root. If Hostinger serves this from a subfolder, the page will load blank with 404s for the JS bundle."
+          else
+            echo "Building for subpath: $WEB_BASE_PATH"
+          fi
+          npm run build
+
+      # The subpath is baked into the HTML at build time, so a mismatch between
+      # it and the folder Hostinger actually serves from is silent at deploy
+      # time and only shows up as a blank page. Surface it in the log instead.
+      - name: Report the subpath baked into the build
+        working-directory: app
+        run: |
+          echo "Asset URLs in the built index.html:"
+          grep -oE '(src|href)="[^"]*"' dist/index.html | sed 's/^/  /'
 
       # Gates on the exact condition that caused the original 403.
       - name: Verify build output
@@ -116,5 +143,11 @@ jobs:
 
       - name: Next step
         run: |
-          echo "In hPanel > Advanced > Git, set the branch to 'deploy' and the"
-          echo "install path to public_html, then deploy (or hit the webhook)."
+          echo "In hPanel > Advanced > Git, change the BRANCH to 'deploy' and"
+          echo "leave the install path alone — the existing path is already the"
+          echo "document root, since that is where the earlier deploy put the"
+          echo "source that Apache answered with 403."
+          echo
+          echo "Note that public_html is usually nested at"
+          echo "  domains/<yourdomain>/public_html"
+          echo "rather than sitting at the File Manager root."
