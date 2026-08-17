@@ -1,18 +1,28 @@
-import { Router } from "express";
+import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
 import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, appendAudit } from "../db.js";
 import { priceDisplay, disclosureCompleteness } from "../serialize.js";
 import { requireAuth } from "../auth.js";
+import { asString, asSlug, asEnum, LIMITS } from "../validate.js";
 
-const router = Router();
+const router = createRouter();
 router.use((req, res, next) => (requireSupabase(res) ? next() : undefined));
 
 const EVENT_TYPES = ["search", "offer_view", "comparison_view", "lead_submitted"];
+const OFFERING_STATUSES = ["draft", "pending_review", "published", "unpublished"];
+const REPORT_STATUSES = ["open", "resolved", "dismissed"];
+
+// These endpoints returned entire tables. The audit log and analytics_events
+// tables grow with every request the platform serves, so an unbounded select
+// is both an availability problem for the admin UI and an easy way to make the
+// server allocate the whole table into memory.
+const MAX_ROWS = 500;
+const MAX_ANALYTICS_ROWS = 50000;
 
 router.use(requireAuth("platform_admin"));
 
 router.get("/orgs", async (_req, res) => {
-  const { data: orgs, error } = await supabase.from("orgs").select(ORG_COLUMNS);
+  const { data: orgs, error } = await supabase.from("orgs").select(ORG_COLUMNS).limit(MAX_ROWS);
   if (error) return res.status(500).json({ error: "Couldn't load organizations." });
   const { data: locations } = await supabase.from("locations").select("id, orgId:org_id");
   const { data: providerProfiles } = await supabase.from("profiles").select("id, orgId:org_id").eq("role", "provider");
@@ -55,9 +65,10 @@ router.patch("/orgs/:id/verify", async (req, res) => {
 });
 
 router.get("/offerings", async (req, res) => {
+  const statusFilter = asEnum(req.query.status, OFFERING_STATUSES, { field: "Status" });
   let query = supabase.from("offerings").select(`${OFFERING_COLUMNS}, location:locations(name, org:orgs(name))`);
-  if (req.query.status) query = query.eq("status", req.query.status);
-  const { data, error } = await query;
+  if (statusFilter) query = query.eq("status", statusFilter);
+  const { data, error } = await query.limit(MAX_ROWS);
   if (error) return res.status(500).json({ error: "Couldn't load offerings." });
 
   const items = data.map(({ location, ...offering }) => ({
@@ -76,10 +87,7 @@ router.get("/offerings", async (req, res) => {
 router.patch("/offerings/:id", async (req, res) => {
   const { data: offering, error: findError } = await supabase.from("offerings").select(OFFERING_COLUMNS).eq("id", req.params.id).maybeSingle();
   if (findError || !offering) return res.status(404).json({ error: "Offering not found." });
-  const { status } = req.body || {};
-  if (!["published", "unpublished"].includes(status)) {
-    return res.status(400).json({ error: "Status must be 'published' or 'unpublished'." });
-  }
+  const status = asEnum(req.body?.status, ["published", "unpublished"], { field: "Status", required: true });
   const from = offering.status;
   const { data: updated, error } = await supabase.from("offerings").update({ status }).eq("id", req.params.id).select(OFFERING_COLUMNS).single();
   if (error) return res.status(500).json({ error: "Couldn't update offering." });
@@ -94,14 +102,16 @@ router.get("/taxonomy", async (_req, res) => {
 });
 
 router.post("/taxonomy", async (req, res) => {
-  const { id, label, examples } = req.body || {};
-  if (!id || !label) return res.status(400).json({ error: "An id and label are required." });
+  const id = asSlug(req.body?.id, { field: "Id", required: true });
+  const label = asString(req.body?.label, { field: "Label", max: LIMITS.name, required: true });
+  const examples = asString(req.body?.examples, { field: "Examples", max: LIMITS.shortText, allowEmpty: true }) || "";
+
   const { data: existing } = await supabase.from("taxonomy").select("id").eq("id", id).maybeSingle();
   if (existing) return res.status(400).json({ error: "A category with that id already exists." });
 
   const { data: category, error } = await supabase
     .from("taxonomy")
-    .insert({ id, label, examples: examples || "" })
+    .insert({ id, label, examples })
     .select("id, label, examples")
     .single();
   if (error) return res.status(500).json({ error: "Couldn't add category." });
@@ -114,8 +124,12 @@ router.patch("/taxonomy/:id", async (req, res) => {
   if (findError || !category) return res.status(404).json({ error: "Category not found." });
   const from = category.label;
   const patch = {};
-  if (req.body?.label !== undefined) patch.label = req.body.label;
-  if (req.body?.examples !== undefined) patch.examples = req.body.examples;
+  if (req.body?.label !== undefined) {
+    patch.label = asString(req.body.label, { field: "Label", max: LIMITS.name, required: true });
+  }
+  if (req.body?.examples !== undefined) {
+    patch.examples = asString(req.body.examples, { field: "Examples", max: LIMITS.shortText, allowEmpty: true }) || "";
+  }
   const { data: updated, error } = await supabase.from("taxonomy").update(patch).eq("id", req.params.id).select("id, label, examples").single();
   if (error) return res.status(500).json({ error: "Couldn't update category." });
   await appendAudit({ actor: req.user.name, action: "taxonomy_updated", entity: category.id, from, to: updated.label });
@@ -136,8 +150,10 @@ router.get("/reports", async (req, res) => {
   let query = supabase
     .from("pricing_reports")
     .select("id, offeringId:offering_id, offeringName:offering_name, providerName:provider_name, reason, details, status, createdAt:created_at")
-    .order("created_at", { ascending: false });
-  if (req.query.status) query = query.eq("status", req.query.status);
+    .order("created_at", { ascending: false })
+    .limit(MAX_ROWS);
+  const reportStatus = asEnum(req.query.status, REPORT_STATUSES, { field: "Status" });
+  if (reportStatus) query = query.eq("status", reportStatus);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: "Couldn't load reports." });
   res.json(data);
@@ -146,10 +162,7 @@ router.get("/reports", async (req, res) => {
 router.patch("/reports/:id", async (req, res) => {
   const { data: report, error: findError } = await supabase.from("pricing_reports").select("id, status").eq("id", req.params.id).maybeSingle();
   if (findError || !report) return res.status(404).json({ error: "Report not found." });
-  const { status } = req.body || {};
-  if (!["open", "resolved", "dismissed"].includes(status)) {
-    return res.status(400).json({ error: "Status must be 'open', 'resolved', or 'dismissed'." });
-  }
+  const status = asEnum(req.body?.status, REPORT_STATUSES, { field: "Status", required: true });
   const from = report.status;
   const { data: updated, error } = await supabase
     .from("pricing_reports")
@@ -166,7 +179,8 @@ router.get("/audit-log", async (_req, res) => {
   const { data, error } = await supabase
     .from("audit_log")
     .select("id, actor, action, entity, from:from_value, to:to_value, at")
-    .order("at", { ascending: false });
+    .order("at", { ascending: false })
+    .limit(MAX_ROWS);
   if (error) return res.status(500).json({ error: "Couldn't load audit log." });
   res.json(data);
 });
@@ -179,7 +193,12 @@ router.get("/analytics/funnel", async (_req, res) => {
     counts.last30Days[type] = 0;
   }
 
-  const { data, error } = await supabase.from("analytics_events").select("type, at").in("type", EVENT_TYPES);
+  const { data, error } = await supabase
+    .from("analytics_events")
+    .select("type, at")
+    .in("type", EVENT_TYPES)
+    .order("at", { ascending: false })
+    .limit(MAX_ANALYTICS_ROWS);
   if (error) return res.status(500).json({ error: "Couldn't load analytics." });
   for (const evt of data) {
     counts.allTime[evt.type] += 1;
@@ -194,7 +213,8 @@ router.get("/analytics/top-categories", async (_req, res) => {
     .from("analytics_events")
     .select("category:meta->>category, zip:meta->>zip")
     .eq("type", "search")
-    .gte("at", thirtyDaysAgo);
+    .gte("at", thirtyDaysAgo)
+    .limit(MAX_ANALYTICS_ROWS);
   if (error) return res.status(500).json({ error: "Couldn't load analytics." });
 
   const byCategory = {};

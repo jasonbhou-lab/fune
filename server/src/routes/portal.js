@@ -1,12 +1,16 @@
-import { Router } from "express";
+import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
 import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS } from "../db.js";
 import { priceDisplay, disclosureCompleteness, daysSince, ATTRIBUTE_KEYS } from "../serialize.js";
 import { requireAuth } from "../auth.js";
 import { offeringsToCsv, parseCsv } from "../csv.js";
+import { bulkLimiter } from "../rateLimit.js";
+import { asString, asEnum, asNumber, asStringArray, asDate, LIMITS } from "../validate.js";
 
-const router = Router();
+const router = createRouter();
 router.use((req, res, next) => (requireSupabase(res) ? next() : undefined));
+
+const MAX_CSV_ROWS = 1000;
 
 const STALE_REVIEW_DAYS = 90;
 const LEAD_STATUSES = ["new", "contacted", "appointment_scheduled", "quoted", "converted", "closed_lost", "do_not_contact"];
@@ -44,7 +48,28 @@ async function orgLocationIds(orgId) {
 }
 
 async function assertOwnsLocation(orgId, locationId) {
+  if (!orgId || !locationId) return false;
   const { data } = await supabase.from("locations").select("id").eq("org_id", orgId).eq("id", locationId).maybeSingle();
+  return Boolean(data);
+}
+
+/**
+ * A lead's `owner` is a FK to profiles(id), and the FK is the only thing that
+ * used to constrain it — so a provider could assign their own leads to any
+ * profile in the database, including users at a competing organization or a
+ * platform admin. That both leaks the existence of those accounts and writes
+ * another org's user into this org's records. Owners must be provider users in
+ * the caller's own org.
+ */
+async function assertOwnsMember(orgId, profileId) {
+  if (!orgId || !profileId) return false;
+  const { data } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("id", profileId)
+    .eq("org_id", orgId)
+    .eq("role", "provider")
+    .maybeSingle();
   return Boolean(data);
 }
 
@@ -145,13 +170,16 @@ router.get("/catalog", async (req, res) => {
 });
 
 router.post("/catalog", async (req, res) => {
-  const { locationId, category, name, description, priceType } = req.body || {};
+  const body = req.body || {};
+  const locationId = asString(body.locationId, { field: "Location id", max: LIMITS.id, required: true });
   if (!(await assertOwnsLocation(req.user.orgId, locationId))) {
     return res.status(403).json({ error: "That location does not belong to your organization." });
   }
-  if (!category || !name || !priceType) {
-    return res.status(400).json({ error: "Category, name, and price type are required to create an offering." });
-  }
+  const category = asString(body.category, { field: "Category", max: LIMITS.shortText, required: true });
+  const name = asString(body.name, { field: "Name", max: LIMITS.name, required: true });
+  const priceType = asEnum(body.priceType, VALID_PRICE_TYPES, { field: "Price type", required: true });
+  const description = asString(body.description, { field: "Description", max: LIMITS.message, allowEmpty: true }) || "";
+
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("offerings")
@@ -159,17 +187,17 @@ router.post("/catalog", async (req, res) => {
       location_id: locationId,
       category,
       name,
-      description: description || "",
+      description,
       price_type: priceType,
-      amount: req.body.amount ?? null,
-      amount_min: req.body.amountMin ?? null,
-      amount_max: req.body.amountMax ?? null,
+      amount: asNumber(body.amount, { field: "Amount", min: 0, max: 100000000 }),
+      amount_min: asNumber(body.amountMin, { field: "Minimum amount", min: 0, max: 100000000 }),
+      amount_max: asNumber(body.amountMax, { field: "Maximum amount", min: 0, max: 100000000 }),
       currency: "USD",
       effective_date: now,
       reviewed_date: now,
-      included: req.body.included || [],
-      excluded: req.body.excluded || [],
-      third_party: req.body.thirdParty || [],
+      included: asStringArray(body.included, { field: "Included", maxItems: 100 }),
+      excluded: asStringArray(body.excluded, { field: "Excluded", maxItems: 100 }),
+      third_party: Array.isArray(body.thirdParty) ? body.thirdParty.slice(0, 100) : [],
       status: "draft",
     })
     .select(OFFERING_COLUMNS)
@@ -184,7 +212,34 @@ router.put("/catalog/:id", async (req, res) => {
     return res.status(404).json({ error: "Offering not found." });
   }
 
-  const next = { ...existing, ...req.body };
+  // Spreading the raw body over the existing row is a mass-assignment shape:
+  // build an explicit patch of only the fields a provider may change, each
+  // validated. Notably `locationId` is not settable here — accepting it would
+  // let a provider move an offering into another organization's location.
+  const body = req.body || {};
+  const next = {
+    ...existing,
+    // category / name / price_type are NOT NULL in the schema, so an empty
+    // value has to be rejected here with a clear 400 rather than becoming a
+    // null that the database refuses as an opaque 500.
+    ...("category" in body && { category: asString(body.category, { field: "Category", max: LIMITS.shortText, required: true }) }),
+    ...("name" in body && { name: asString(body.name, { field: "Name", max: LIMITS.name, required: true }) }),
+    ...("description" in body && {
+      description: asString(body.description, { field: "Description", max: LIMITS.message, allowEmpty: true }) || "",
+    }),
+    ...("priceType" in body && { priceType: asEnum(body.priceType, VALID_PRICE_TYPES, { field: "Price type", required: true }) }),
+    ...("amount" in body && { amount: asNumber(body.amount, { field: "Amount", min: 0, max: 100000000 }) }),
+    ...("amountMin" in body && { amountMin: asNumber(body.amountMin, { field: "Minimum amount", min: 0, max: 100000000 }) }),
+    ...("amountMax" in body && { amountMax: asNumber(body.amountMax, { field: "Maximum amount", min: 0, max: 100000000 }) }),
+    ...("effectiveDate" in body && { effectiveDate: asDate(body.effectiveDate, { field: "Effective date" }) }),
+    ...("included" in body && { included: asStringArray(body.included, { field: "Included", maxItems: 100 }) }),
+    ...("excluded" in body && { excluded: asStringArray(body.excluded, { field: "Excluded", maxItems: 100 }) }),
+    ...("thirdParty" in body && { thirdParty: Array.isArray(body.thirdParty) ? body.thirdParty.slice(0, 100) : [] }),
+    // Previously taken straight from the body with no check, leaving the
+    // database CHECK constraint as the only guard against an arbitrary value.
+    ...("status" in body && { status: asEnum(body.status, VALID_OFFERING_STATUSES, { field: "Status", required: true }) }),
+  };
+
   if (next.status === "published") {
     const missing = [];
     if (!next.category) missing.push("category");
@@ -229,7 +284,7 @@ router.put("/catalog/:id", async (req, res) => {
   res.json(updated);
 });
 
-router.get("/catalog/export", async (req, res) => {
+router.get("/catalog/export", bulkLimiter, async (req, res) => {
   const locIds = await orgLocationIds(req.user.orgId);
   let items = [];
   if (locIds.length > 0) {
@@ -237,16 +292,19 @@ router.get("/catalog/export", async (req, res) => {
     if (error) return res.status(500).json({ error: "Couldn't export catalog." });
     items = data;
   }
-  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  // Force a download rather than letting a browser render the response inline.
+  res.setHeader("Content-Disposition", 'attachment; filename="catalog-export.csv"');
   res.send(offeringsToCsv(items));
 });
 
-router.post("/catalog/import", async (req, res) => {
-  const { csv } = req.body || {};
-  if (!csv || !String(csv).trim()) {
-    return res.status(400).json({ error: "No CSV content provided." });
-  }
+router.post("/catalog/import", bulkLimiter, async (req, res) => {
+  const csv = asString(req.body?.csv, { field: "CSV content", max: LIMITS.csv, required: true });
+
   const rows = parseCsv(csv);
+  if (rows.length > MAX_CSV_ROWS) {
+    return res.status(400).json({ error: `Too many rows — import at most ${MAX_CSV_ROWS} at a time.` });
+  }
   const locIds = await orgLocationIds(req.user.orgId);
 
   let created = 0;
@@ -284,18 +342,60 @@ router.post("/catalog/import", async (req, res) => {
       continue;
     }
 
+    // Uploaded cells were previously written through with no bounds: names and
+    // descriptions of any length, and `Number("abc")` silently becoming NaN.
+    if (name.length > LIMITS.name || category.length > LIMITS.shortText) {
+      errors.push({ row: rowNum, error: "Category or name is too long." });
+      continue;
+    }
+    const numeric = {};
+    let badNumber = null;
+    for (const [csvKey, column] of [
+      ["amount", "amount"],
+      ["amountMin", "amount_min"],
+      ["amountMax", "amount_max"],
+    ]) {
+      const raw = (row[csvKey] || "").trim();
+      if (!raw) {
+        numeric[column] = null;
+        continue;
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) {
+        badNumber = `Invalid ${csvKey} '${raw}'.`;
+        break;
+      }
+      numeric[column] = n;
+    }
+    if (badNumber) {
+      errors.push({ row: rowNum, error: badNumber });
+      continue;
+    }
+
+    const effectiveRaw = (row.effectiveDate || "").trim();
+    if (effectiveRaw && Number.isNaN(Date.parse(effectiveRaw))) {
+      errors.push({ row: rowNum, error: `Invalid effectiveDate '${effectiveRaw}'.` });
+      continue;
+    }
+
+    const splitList = (value) =>
+      (value || "")
+        .split(";")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 100)
+        .map((s) => s.slice(0, LIMITS.shortText));
+
     const fields = {
       location_id: locationId,
       category,
       name,
-      description: row.description || "",
+      description: (row.description || "").slice(0, LIMITS.message),
       price_type: priceType,
-      amount: row.amount ? Number(row.amount) : null,
-      amount_min: row.amountMin ? Number(row.amountMin) : null,
-      amount_max: row.amountMax ? Number(row.amountMax) : null,
-      effective_date: row.effectiveDate || now,
-      included: (row.included || "").split(";").map((s) => s.trim()).filter(Boolean),
-      excluded: (row.excluded || "").split(";").map((s) => s.trim()).filter(Boolean),
+      ...numeric,
+      effective_date: effectiveRaw ? new Date(Date.parse(effectiveRaw)).toISOString() : now,
+      included: splitList(row.included),
+      excluded: splitList(row.excluded),
     };
     if (status === "published" && (fields.price_type === "fixed" || fields.price_type === "starting_at") && !fields.amount) {
       errors.push({ row: rowNum, error: "Currency and amount are required to publish a fixed or starting-at price." });
@@ -316,7 +416,10 @@ router.post("/catalog/import", async (req, res) => {
         .update({ ...fields, status: status || existing.status, reviewed_date: now })
         .eq("id", existing.id);
       if (error) {
-        errors.push({ row: rowNum, error: `Database error: ${error.message}` });
+        // Postgres/PostgREST messages name tables, columns, and constraints;
+        // logged server-side, generic to the client.
+        console.error(`catalog import row ${rowNum} failed:`, error.message);
+        errors.push({ row: rowNum, error: "Could not save this row." });
         continue;
       }
       updated += 1;
@@ -325,7 +428,10 @@ router.post("/catalog/import", async (req, res) => {
         .from("offerings")
         .insert({ ...fields, currency: "USD", reviewed_date: now, third_party: [], status: status || "draft" });
       if (error) {
-        errors.push({ row: rowNum, error: `Database error: ${error.message}` });
+        // Postgres/PostgREST messages name tables, columns, and constraints;
+        // logged server-side, generic to the client.
+        console.error(`catalog import row ${rowNum} failed:`, error.message);
+        errors.push({ row: rowNum, error: "Could not save this row." });
         continue;
       }
       created += 1;
@@ -391,19 +497,42 @@ router.patch("/leads/:id", async (req, res) => {
   if (findError || !lead || !(await assertOwnsLocation(req.user.orgId, lead.locationId))) {
     return res.status(404).json({ error: "Lead not found." });
   }
-  const { status, owner } = req.body || {};
-  if (status && !LEAD_STATUSES.includes(status)) {
-    return res.status(400).json({ error: `Status must be one of: ${LEAD_STATUSES.join(", ")}.` });
-  }
+  const body = req.body || {};
+  const status = asEnum(body.status, LEAD_STATUSES, { field: "Status" });
+
   const patch = {};
   if (status && status !== lead.status) {
     patch.status = status;
-    await supabase.from("lead_status_history").insert({ lead_id: lead.id, status, at: new Date().toISOString() });
   }
-  if (owner !== undefined) patch.owner = owner;
+  if (body.owner !== undefined) {
+    if (body.owner === null || body.owner === "") {
+      patch.owner = null;
+    } else {
+      const owner = asString(body.owner, { field: "Owner", max: LIMITS.id, required: true });
+      if (!(await assertOwnsMember(req.user.orgId, owner))) {
+        return res.status(400).json({ error: "That owner is not a member of your organization." });
+      }
+      patch.owner = owner;
+    }
+  }
+
+  if (Object.keys(patch).length === 0) {
+    const { data: unchanged } = await supabase.from("leads").select(LEAD_DETAIL_COLUMNS).eq("id", lead.id).single();
+    return res.json(withSortedHistory(unchanged));
+  }
 
   const { data: updated, error } = await supabase.from("leads").update(patch).eq("id", req.params.id).select(LEAD_DETAIL_COLUMNS).single();
   if (error) return res.status(500).json({ error: "Couldn't update lead." });
+
+  // Record history only after the status change actually persisted — the
+  // previous order wrote the history row first, so a failed update left a
+  // status-history entry for a transition that never happened.
+  if (patch.status) {
+    await supabase.from("lead_status_history").insert({ lead_id: lead.id, status: patch.status, at: new Date().toISOString() });
+    const { data: refreshed } = await supabase.from("leads").select(LEAD_DETAIL_COLUMNS).eq("id", lead.id).single();
+    return res.json(withSortedHistory(refreshed || updated));
+  }
+
   res.json(withSortedHistory(updated));
 });
 

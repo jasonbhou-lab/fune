@@ -3,16 +3,16 @@ import Constants from "expo-constants";
 
 const API_PORT = 4000;
 
-function resolveApiHost() {
-  // Web (including Expo web / react-native-web in a desktop browser): the
-  // backend is reachable on the same machine.
-  if (Platform.OS === "web") {
-    if (typeof window !== "undefined" && window.location && window.location.hostname) {
-      return window.location.hostname;
-    }
-    return "localhost";
-  }
+// Hosts where an unencrypted connection is acceptable because the traffic
+// never leaves the machine or the local network during development.
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0|.*\.local)$/i;
+const PRIVATE_IP_RE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
 
+function isLocalHost(host) {
+  return LOCAL_HOST_RE.test(host) || PRIVATE_IP_RE.test(host);
+}
+
+function devApiHost() {
   // Native (Expo Go / dev client on a phone): localhost means the phone
   // itself, not the dev machine, so derive the dev machine's LAN IP from
   // the URL Expo used to serve this bundle.
@@ -22,15 +22,67 @@ function resolveApiHost() {
     Constants.manifest2?.extra?.expoClient?.hostUri ||
     Constants.manifest?.debuggerHost;
 
-  if (hostUri) {
-    const host = hostUri.split(":")[0];
-    if (host) return host;
-  }
-
-  return "localhost";
+  const host = hostUri ? hostUri.split(":")[0] : null;
+  return host || "localhost";
 }
 
-export const API_BASE = `http://${resolveApiHost()}:${API_PORT}/api`;
+/**
+ * Where the Express backend lives.
+ *
+ * This used to be hardcoded to `http://<current hostname>:4000/api`, which had
+ * two problems in production: every request — including the `Authorization:
+ * Bearer <supabase access token>` header — travelled unencrypted over plain
+ * HTTP, where anyone on the network path could lift the token and impersonate
+ * the account; and port 4000 isn't reachable at all on hosting that only
+ * exposes 80/443, so the app couldn't talk to its own API.
+ *
+ * Resolution order:
+ *  1. EXPO_PUBLIC_API_BASE — set this for any real deployment. Expo inlines
+ *     EXPO_PUBLIC_* variables at build time, so `expo export` bakes it in.
+ *     It has to come from an app/.env file (a shell-only variable does not
+ *     reliably reach the bundle), and Metro caches the substitution — rebuild
+ *     with --clear after changing it. See app/.env.example.
+ *  2. Web on a non-local hostname (i.e. a deployed site): same origin as the
+ *     page, so it inherits the page's HTTPS, on the conventional /api path.
+ *     This expects the host to proxy /api to the Node server — see README.
+ *  3. Local development: plain HTTP to the dev machine, which is fine because
+ *     it stays on localhost or the LAN.
+ */
+function resolveApiBase() {
+  const fromEnv = process.env.EXPO_PUBLIC_API_BASE;
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+
+  if (Platform.OS === "web") {
+    const loc = typeof window !== "undefined" ? window.location : null;
+    const host = loc?.hostname || "localhost";
+
+    if (!isLocalHost(host)) {
+      // Deployed: same-origin, same protocol as the page.
+      return `${loc.origin}/api`;
+    }
+    return `http://${host}:${API_PORT}/api`;
+  }
+
+  // Native. __DEV__ is false in a release build, where there is no Metro host
+  // to infer and no safe default — the build must supply EXPO_PUBLIC_API_BASE.
+  if (!__DEV__) {
+    console.error(
+      "EXPO_PUBLIC_API_BASE is not set. A release build has no development server to " +
+        "infer the API host from — set it (to an https:// URL) before building."
+    );
+  }
+  return `http://${devApiHost()}:${API_PORT}/api`;
+}
+
+export const API_BASE = resolveApiBase();
+
+if (API_BASE.startsWith("http://") && !isLocalHost(API_BASE.replace(/^https?:\/\//, "").split(/[:/]/)[0])) {
+  // Loud, because this means access tokens are crossing the network in clear text.
+  console.error(
+    `API_BASE is using unencrypted HTTP against a non-local host (${API_BASE}). ` +
+      "Authorization tokens will be sent in clear text — use https://."
+  );
+}
 
 // Supabase project connection. Find these under Project Settings > API in
 // your Supabase dashboard. The anon key is safe to ship in client code (it's

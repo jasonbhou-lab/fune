@@ -14,9 +14,18 @@ const COLUMNS = [
   "status",
 ];
 
+// Excel, LibreOffice, and Google Sheets treat a cell that begins with one of
+// these as a formula, so an offering named `=HYPERLINK("http://evil","Click")`
+// — or a DDE/command payload — executes when the exported file is opened.
+// Prefixing with an apostrophe forces the cell to be read as text. The
+// character is stripped again on import (see parseCsv) so a round-trip through
+// export/import doesn't accumulate them.
+const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+
 function csvField(value) {
-  const s = value === null || value === undefined ? "" : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  let s = value === null || value === undefined ? "" : String(value);
+  if (FORMULA_PREFIX.test(s)) s = `'${s}`;
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 
@@ -89,9 +98,15 @@ export function parseCsv(text) {
   if (nonEmpty.length === 0) return [];
   const header = nonEmpty[0].map((h) => h.trim());
   return nonEmpty.slice(1).map((r) => {
-    const obj = {};
+    // Null-prototype object: header names come from the uploaded file, so a
+    // column literally called `__proto__` would otherwise write through to
+    // Object.prototype instead of becoming a normal key.
+    const obj = Object.create(null);
     header.forEach((h, idx) => {
-      obj[h] = r[idx] !== undefined ? r[idx] : "";
+      const raw = r[idx] !== undefined ? r[idx] : "";
+      // Undo the anti-formula apostrophe added on export, so export -> import
+      // round-trips cleanly instead of stacking quotes.
+      obj[h] = /^'[=+\-@\t\r]/.test(raw) ? raw.slice(1) : raw;
     });
     return obj;
   });

@@ -1,13 +1,27 @@
 import { milesBetween } from "./geo.js";
 
+// Any of these amounts can be null in the database. Reading .toLocaleString()
+// off null threw a TypeError, and because priceDisplay runs inside /api/search
+// for every result, a single malformed row took down search for every user —
+// publish validation only requires an amount for fixed/starting_at, so a
+// published "range" offering with no min/max was enough to do it.
+function money(amount) {
+  return typeof amount === "number" && Number.isFinite(amount) ? `$${amount.toLocaleString()}` : null;
+}
+
 export function priceDisplay(offering) {
   switch (offering.priceType) {
     case "fixed":
-      return { label: "Fixed", text: `$${offering.amount.toLocaleString()}` };
-    case "starting_at":
-      return { label: "Starting at", text: `from $${offering.amount.toLocaleString()}` };
-    case "range":
-      return { label: "Range", text: `$${offering.amountMin.toLocaleString()}–$${offering.amountMax.toLocaleString()}` };
+      return { label: "Fixed", text: money(offering.amount) ?? "—" };
+    case "starting_at": {
+      const amount = money(offering.amount);
+      return { label: "Starting at", text: amount ? `from ${amount}` : "—" };
+    }
+    case "range": {
+      const min = money(offering.amountMin);
+      const max = money(offering.amountMax);
+      return { label: "Range", text: min && max ? `${min}–${max}` : min || max || "—" };
+    }
     case "quote_required":
       return { label: "Quote required", text: "Price on request" };
     default:

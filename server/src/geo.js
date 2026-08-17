@@ -5,8 +5,15 @@ const ZIP_COORDS = {
   "77024": { lat: 29.7699, lng: -95.4816, city: "Houston", state: "TX" },
 };
 
+const DEFAULT_ZIP = "77494";
+
 export function geocodeZip(zip) {
-  return ZIP_COORDS[zip] || ZIP_COORDS["77494"];
+  // Plain bracket indexing walked the prototype chain, so a request for
+  // ?zip=constructor or ?zip=__proto__ returned Object.prototype members
+  // instead of falling back to the default. hasOwn confines the lookup to the
+  // table's real entries.
+  if (typeof zip === "string" && Object.hasOwn(ZIP_COORDS, zip)) return ZIP_COORDS[zip];
+  return ZIP_COORDS[DEFAULT_ZIP];
 }
 
 // Haversine distance in miles
