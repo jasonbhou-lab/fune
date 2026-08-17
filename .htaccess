@@ -28,7 +28,13 @@
   RewriteRule ^ - [L]
 
   # Everything else is an app route: hand it to the SPA.
-  RewriteRule . /index.html [L]
+  #
+  # The target is RELATIVE on purpose. Hostinger's Git tool clones into a
+  # subfolder of the document root, so this file is not necessarily at the web
+  # root. A root-absolute "/index.html" would point outside the deployed folder
+  # and 404; a relative target resolves against whichever directory this
+  # .htaccess sits in, so it works at the root and at any depth.
+  RewriteRule . index.html [L]
 </IfModule>
 
 # ---------------------------------------------------------------------------
