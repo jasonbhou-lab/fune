@@ -142,12 +142,26 @@ jobs:
           echo "Published $(git rev-parse --short HEAD) to the deploy branch."
 
       - name: Next step
+        env:
+          WEB_BASE_PATH: ${{ vars.WEB_BASE_PATH }}
         run: |
-          echo "In hPanel > Advanced > Git, change the BRANCH to 'deploy' and"
-          echo "leave the install path alone — the existing path is already the"
-          echo "document root, since that is where the earlier deploy put the"
-          echo "source that Apache answered with 403."
+          echo "In hPanel > Advanced > Git, set the BRANCH to 'deploy'."
           echo
-          echo "Note that public_html is usually nested at"
-          echo "  domains/<yourdomain>/public_html"
-          echo "rather than sitting at the File Manager root."
+          echo "Hostinger clones into a subfolder of the document root, so the"
+          echo "site is served from https://<yourdomain>/<subfolder>/ — not the"
+          echo "domain root. The repository variable WEB_BASE_PATH must match"
+          echo "that subfolder exactly, or the page loads blank because the"
+          echo "asset URLs above will not resolve."
+          echo
+          if [ -z "${WEB_BASE_PATH:-}" ]; then
+            echo "  WEB_BASE_PATH: (not set) -> built for the domain root."
+            echo "  If the served folder is NOT the document root, set it and re-run."
+          else
+            echo "  WEB_BASE_PATH: $WEB_BASE_PATH"
+            echo "  Confirm the served URL is https://<yourdomain>$WEB_BASE_PATH/"
+          fi
+          echo
+          echo "Better, if your plan allows it: point the domain's website root"
+          echo "directory at the clone folder instead. Then clear WEB_BASE_PATH"
+          echo "and the site serves from the root with clean URLs, which also"
+          echo "avoids having to add the subpath to the Google OAuth redirect."
