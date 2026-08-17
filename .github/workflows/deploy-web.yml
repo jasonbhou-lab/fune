@@ -1,33 +1,41 @@
-name: Deploy web app to Hostinger
+name: Publish web build to deploy branch
 
-# Hostinger's git integration clones this repository but never runs a build,
-# and the built site (app/dist/) is gitignored — so nothing it deployed ever
-# contained an index.html, and Apache answered every request with 403. This
-# workflow does the build that was missing and uploads only its output.
+# Hostinger's git integration clones this repository but never runs a build, and
+# app/dist/ is gitignored — so nothing it deployed ever contained an index.html,
+# and Apache answered every request with 403.
+#
+# This builds the app and commits the output to a dedicated `deploy` branch,
+# which has index.html at its root. Hostinger's existing git integration is then
+# pointed at `deploy` instead of `main`.
+#
+# Why not upload over FTP/FTPS: that requires storing hosting credentials as
+# repository secrets. This route authenticates with the GITHUB_TOKEN that
+# Actions provides automatically, so there is no credential to create, store,
+# or rotate. `main` stays free of build artifacts — they exist only on `deploy`.
 
 on:
   push:
     branches: [main]
-    # The backend and SQL schema don't affect the static bundle, so don't
-    # redeploy the site when only those change.
+    # server/ and supabase/ don't affect the static bundle.
     paths:
       - "app/**"
       - ".github/workflows/deploy-web.yml"
-  workflow_dispatch: # lets you redeploy by hand from the Actions tab
+  workflow_dispatch:
 
-# Least privilege: this job only ever reads the repository.
+# contents: write is required to push the deploy branch, and is the only
+# permission this job gets.
 permissions:
-  contents: read
+  contents: write
 
-# Never let two deploys upload at once. Not cancelling in progress is
-# deliberate — interrupting an upload leaves the site half-replaced, with a new
-# index.html pointing at a bundle that hasn't finished transferring.
+# Never publish twice concurrently. Not cancelling in progress is deliberate:
+# interrupting the push can leave the branch with an index.html referencing a
+# bundle that isn't there.
 concurrency:
   group: deploy-web
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -41,8 +49,8 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      # `npm ci` (not `install`) so the build uses exactly the locked
-      # dependency tree and can't silently pick up a new transitive version.
+      # `npm ci`, not `install`, so the build uses exactly the locked dependency
+      # tree and cannot silently pull a new transitive version.
       - name: Install dependencies
         working-directory: app
         run: npm ci
@@ -51,38 +59,62 @@ jobs:
         working-directory: app
         run: npm run build
 
-      # Catches the failure mode this workflow exists to prevent: shipping a
-      # directory with no index for Apache to serve.
+      # Gates on the exact condition that caused the original 403.
       - name: Verify build output
         run: |
-          test -f app/dist/index.html || { echo "::error::app/dist/index.html missing — refusing to deploy"; exit 1; }
-          test -f app/dist/.htaccess || { echo "::error::app/dist/.htaccess missing — SPA routes would 404"; exit 1; }
+          test -f app/dist/index.html || { echo "::error::app/dist/index.html missing — refusing to publish"; exit 1; }
+          test -f app/dist/.htaccess  || { echo "::error::app/dist/.htaccess missing — security headers would be absent"; exit 1; }
           echo "Build output:"
           ls -la app/dist/
 
-      - name: Upload to Hostinger over FTPS
-        # Third-party action, so it is pinned to a commit SHA rather than a
-        # tag: this step receives the hosting credentials, and a tag can be
-        # moved to point at different code. Note this repo has both a tag and a
-        # branch called v4.4.0 pointing at different commits — the SHA below is
-        # the tag, i.e. the actual release.
-        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0
-        with:
-          server: ${{ secrets.HOSTINGER_FTP_HOST }}
-          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          # Explicit TLS. Plain "ftp" would put the hosting account password
-          # and the whole transfer on the wire in clear text.
-          protocol: ftps
-          local-dir: ./app/dist/
-          server-dir: ${{ vars.HOSTINGER_SERVER_DIR || 'public_html/' }}
-          # Incremental sync: only changed files are transferred. Left at the
-          # default (no clean slate) so the upload cannot delete anything else
-          # living in the web root. The trade-off is that superseded hashed
-          # bundles accumulate under _expo/ and want an occasional manual sweep.
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/.DS_Store
+      - name: Publish build output to deploy branch
+        env:
+          # Provided automatically by Actions; scoped to this repository and
+          # expires when the job ends.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          WORK="$(mktemp -d)"
+
+          git init -q "$WORK"
+          cd "$WORK"
+          git remote add origin "$REMOTE"
+
+          # Build on top of the existing branch rather than force-pushing a
+          # rewritten one, so Hostinger's `git pull` fast-forwards instead of
+          # failing on a non-fast-forward update.
+          if git fetch -q origin deploy; then
+            git checkout -q -b deploy FETCH_HEAD
+            # Clear tracked files so deletions propagate; leaves .git intact.
+            git rm -rq --ignore-unmatch .
+          else
+            echo "deploy branch does not exist yet — creating it"
+            git checkout -q -b deploy
+          fi
+
+          cp -R "$GITHUB_WORKSPACE/app/dist/." .
+
+          # Belt and braces: the deploy branch is served as a web root, so a
+          # stray .env or key must never reach it.
+          rm -f .env .env.* *.pem *.key || true
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Build output is byte-identical to the current deploy branch; nothing to publish."
+            exit 0
+          fi
+
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Build from ${GITHUB_SHA}"
+
+          git push -q origin deploy
+          echo "Published $(git rev-parse --short HEAD) to the deploy branch."
+
+      - name: Next step
+        run: |
+          echo "In hPanel > Advanced > Git, set the branch to 'deploy' and the"
+          echo "install path to public_html, then deploy (or hit the webhook)."
