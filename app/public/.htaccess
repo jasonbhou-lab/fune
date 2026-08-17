@@ -3,6 +3,32 @@
 # ships with every build rather than having to be re-added on the server.
 
 # ---------------------------------------------------------------------------
+# Keep source code off the web
+# ---------------------------------------------------------------------------
+# The built site is committed to the root of `main` so that Hostinger's git
+# deploy serves it directly. That means the repository's source directories land
+# in the web root next to it, and without this they are all publicly
+# downloadable — supabase/schema.sql, the whole server/, every source file under
+# app/. Deny them before any routing happens.
+#
+# This is defence in depth, not the primary control: it is the only thing
+# standing between a clone and the source, so if a request for
+# /supabase/schema.sql ever returns 200, treat that as a live exposure.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(app|server|supabase|\.github)(/|$) - [F,L]
+</IfModule>
+
+<FilesMatch "(^|\.)(env|gitignore|gitattributes)$|\.(sql|md|yml|yaml|lock|log)$">
+  Require all denied
+</FilesMatch>
+
+# package.json / package-lock.json also carry no value to a visitor.
+<FilesMatch "^(package(-lock)?\.json|eas\.json|app\.config\.js|app\.json|db\.js)$">
+  Require all denied
+</FilesMatch>
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 # Today NavigationContainer has no `linking` config, so the app never leaves "/"

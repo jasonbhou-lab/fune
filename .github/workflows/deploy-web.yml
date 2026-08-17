@@ -1,46 +1,53 @@
-name: Publish web build to deploy branch
+name: Build web app into main
 
-# Hostinger's git integration clones this repository but never runs a build, and
-# app/dist/ is gitignored — so nothing it deployed ever contained an index.html,
-# and Apache answered every request with 403.
+# Hostinger's git integration clones this repository and serves the result. It
+# never runs a build, and app/dist/ is gitignored — so what it deployed was pure
+# source with no index.html at its root, and Apache answers a directory with no
+# index and no listing with 403. That is the error.
 #
-# This builds the app and commits the output to a dedicated `deploy` branch,
-# which has index.html at its root. Hostinger's existing git integration is then
-# pointed at `deploy` instead of `main`.
+# Deploying from a separate branch would fix it too, but it requires repointing
+# hPanel at that branch. Publishing into `main` instead means Hostinger's
+# existing configuration already serves a working site: no branch change, no
+# install-path change, nothing to reconfigure.
 #
-# Why not upload over FTP/FTPS: that requires storing hosting credentials as
-# repository secrets. This route authenticates with the GITHUB_TOKEN that
-# Actions provides automatically, so there is no credential to create, store,
-# or rotate. `main` stays free of build artifacts — they exist only on `deploy`.
+# The trade-off, accepted deliberately: the built site is committed to the root
+# of `main`, so main carries build artifacts and its root holds both the site
+# and the source. app/public/.htaccess denies HTTP access to the source
+# directories that end up alongside it.
 
 on:
   push:
     branches: [main]
-    # server/ and supabase/ don't affect the static bundle.
+    # Only source changes should trigger a rebuild. This is also the guard
+    # against recursion: the commit this workflow makes touches root paths
+    # (index.html, _expo/**, the manifest) and never app/**, so it cannot
+    # retrigger itself. GitHub additionally suppresses workflow runs for pushes
+    # authenticated with GITHUB_TOKEN, so there are two independent guards.
     paths:
       - "app/**"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
-# contents: write is required to push the deploy branch, and is the only
-# permission this job gets.
 permissions:
   contents: write
 
-# Never publish twice concurrently. Not cancelling in progress is deliberate:
-# interrupting the push can leave the branch with an index.html referencing a
-# bundle that isn't there.
+# One publish at a time. Not cancelling mid-run: this pushes a commit, and
+# interrupting between build and push leaves nothing useful behind anyway.
 concurrency:
-  group: deploy-web
+  group: publish-web
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  build-and-commit:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Check out main
         uses: actions/checkout@v7
+        with:
+          ref: main
+          # Full history so a rebase against a concurrent push can succeed.
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -49,8 +56,6 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      # `npm ci`, not `install`, so the build uses exactly the locked dependency
-      # tree and cannot silently pull a new transitive version.
       - name: Install dependencies
         working-directory: app
         run: npm ci
@@ -58,110 +63,94 @@ jobs:
       - name: Build static web bundle
         working-directory: app
         env:
-          # Hostinger's Git tool clones into a SUBFOLDER of the document root,
-          # so the site is served from e.g. https://example.com/glp/. An Expo
-          # export writes absolute asset URLs, which would resolve against the
-          # domain root and 404 — a blank white page. app.config.js turns this
-          # into experiments.baseUrl so those URLs carry the subpath.
-          #
-          # Set the repository variable WEB_BASE_PATH (Settings > Secrets and
-          # variables > Actions > Variables) to the subfolder name, e.g. "/glp".
-          # It is not a secret, which is why it is a variable rather than one.
-          # Leave it unset only if the site is ever served from the domain root.
+          # Set the repository VARIABLE WEB_BASE_PATH (Settings > Secrets and
+          # variables > Actions > Variables) when Hostinger serves the clone
+          # from a subfolder of the document root rather than the root itself.
+          # Expo writes absolute asset URLs, so a wrong value here renders a
+          # blank page with 404s for the JS bundle rather than an obvious error.
           WEB_BASE_PATH: ${{ vars.WEB_BASE_PATH }}
         run: |
           if [ -z "${WEB_BASE_PATH:-}" ]; then
-            echo "::warning::WEB_BASE_PATH is not set — building for the domain root. If Hostinger serves this from a subfolder, the page will load blank with 404s for the JS bundle."
+            echo "::notice::WEB_BASE_PATH not set — building for the domain root."
           else
-            echo "Building for subpath: $WEB_BASE_PATH"
+            echo "::notice::Building for subpath ${WEB_BASE_PATH}"
           fi
           npm run build
 
-      # The subpath is baked into the HTML at build time, so a mismatch between
-      # it and the folder Hostinger actually serves from is silent at deploy
-      # time and only shows up as a blank page. Surface it in the log instead.
-      - name: Report the subpath baked into the build
-        working-directory: app
-        run: |
-          echo "Asset URLs in the built index.html:"
-          grep -oE '(src|href)="[^"]*"' dist/index.html | sed 's/^/  /'
-
-      # Gates on the exact condition that caused the original 403.
       - name: Verify build output
         run: |
           test -f app/dist/index.html || { echo "::error::app/dist/index.html missing — refusing to publish"; exit 1; }
-          test -f app/dist/.htaccess  || { echo "::error::app/dist/.htaccess missing — security headers would be absent"; exit 1; }
-          echo "Build output:"
-          ls -la app/dist/
+          test -f app/dist/.htaccess  || { echo "::error::app/dist/.htaccess missing — source would be web-readable"; exit 1; }
+          echo "Asset URLs baked into index.html:"
+          grep -oE '(src|href)="[^"]*"' app/dist/index.html | sed 's/^/  /'
 
-      - name: Publish build output to deploy branch
-        env:
-          # Provided automatically by Actions; scoped to this repository and
-          # expires when the job ends.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish build output to the root of main
         run: |
           set -euo pipefail
 
-          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          WORK="$(mktemp -d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git init -q "$WORK"
-          cd "$WORK"
-          git remote add origin "$REMOTE"
-
-          # Build on top of the existing branch rather than force-pushing a
-          # rewritten one, so Hostinger's `git pull` fast-forwards instead of
-          # failing on a non-fast-forward update.
-          if git fetch -q origin deploy; then
-            git checkout -q -b deploy FETCH_HEAD
-            # Clear tracked files so deletions propagate; leaves .git intact.
-            git rm -rq --ignore-unmatch .
-          else
-            echo "deploy branch does not exist yet — creating it"
-            git checkout -q -b deploy
+          # Remove the files published by the previous run so that renamed or
+          # deleted assets (bundle filenames are content-hashed, so they change
+          # on every source edit) don't accumulate in the web root forever.
+          MANIFEST=.web-build-manifest
+          if [ -f "$MANIFEST" ]; then
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              git rm -q --ignore-unmatch -- "$f" || true
+            done < "$MANIFEST"
           fi
 
-          cp -R "$GITHUB_WORKSPACE/app/dist/." .
+          # Copy the build to the repository root, which is what Hostinger's
+          # clone exposes as the served directory.
+          cp -R app/dist/. .
 
-          # Belt and braces: the deploy branch is served as a web root, so a
-          # stray .env or key must never reach it.
-          rm -f .env .env.* *.pem *.key || true
+          # Record exactly what was published, for the next run's cleanup.
+          ( cd app/dist && find . -type f -printf '%P\n' | LC_ALL=C sort ) > "$MANIFEST"
+          echo "Published $(wc -l < "$MANIFEST") files to the repository root."
 
           git add -A
+
           if git diff --cached --quiet; then
-            echo "Build output is byte-identical to the current deploy branch; nothing to publish."
+            echo "Build output is unchanged; nothing to commit."
             exit 0
           fi
 
-          git \
-            -c user.name="github-actions[bot]" \
-            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "Build from ${GITHUB_SHA}"
+          git commit -q -m "Build web app from ${GITHUB_SHA::7} [skip ci]"
 
-          git push -q origin deploy
-          echo "Published $(git rev-parse --short HEAD) to the deploy branch."
+          # A human push can land between checkout and push; rebase and retry
+          # rather than failing the deploy.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}) — rebasing onto origin/main."
+            git pull --rebase --autostash origin main
+          done
 
-      - name: Next step
+          echo "::error::Could not push after 3 attempts."
+          exit 1
+
+      - name: What happens next
         env:
           WEB_BASE_PATH: ${{ vars.WEB_BASE_PATH }}
         run: |
-          echo "In hPanel > Advanced > Git, set the BRANCH to 'deploy'."
+          echo "main now contains the built site at its root, so Hostinger's"
+          echo "existing git configuration serves it — branch stays 'main' and"
+          echo "the install path is unchanged."
           echo
-          echo "Hostinger clones into a subfolder of the document root, so the"
-          echo "site is served from https://<yourdomain>/<subfolder>/ — not the"
-          echo "domain root. The repository variable WEB_BASE_PATH must match"
-          echo "that subfolder exactly, or the page loads blank because the"
-          echo "asset URLs above will not resolve."
+          echo "Trigger a deploy in hPanel (or via its auto-deploy webhook) so"
+          echo "Hostinger pulls this commit."
           echo
           if [ -z "${WEB_BASE_PATH:-}" ]; then
-            echo "  WEB_BASE_PATH: (not set) -> built for the domain root."
-            echo "  If the served folder is NOT the document root, set it and re-run."
+            echo "  WEB_BASE_PATH: (unset) -> built for the domain root."
           else
-            echo "  WEB_BASE_PATH: $WEB_BASE_PATH"
-            echo "  Confirm the served URL is https://<yourdomain>$WEB_BASE_PATH/"
+            echo "  WEB_BASE_PATH: ${WEB_BASE_PATH} -> expect the site at"
+            echo "  https://<yourdomain>${WEB_BASE_PATH}/"
           fi
           echo
-          echo "Better, if your plan allows it: point the domain's website root"
-          echo "directory at the clone folder instead. Then clear WEB_BASE_PATH"
-          echo "and the site serves from the root with clean URLs, which also"
-          echo "avoids having to add the subpath to the Google OAuth redirect."
+          echo "After deploying, verify the source is NOT reachable:"
+          echo "  curl -so /dev/null -w '%{http_code}\\n' https://<yourdomain>/supabase/schema.sql"
+          echo "Anything other than 403 means .htaccess is not being applied."
