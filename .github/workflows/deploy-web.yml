@@ -1,0 +1,88 @@
+name: Deploy web app to Hostinger
+
+# Hostinger's git integration clones this repository but never runs a build,
+# and the built site (app/dist/) is gitignored — so nothing it deployed ever
+# contained an index.html, and Apache answered every request with 403. This
+# workflow does the build that was missing and uploads only its output.
+
+on:
+  push:
+    branches: [main]
+    # The backend and SQL schema don't affect the static bundle, so don't
+    # redeploy the site when only those change.
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch: # lets you redeploy by hand from the Actions tab
+
+# Least privilege: this job only ever reads the repository.
+permissions:
+  contents: read
+
+# Never let two deploys upload at once. Not cancelling in progress is
+# deliberate — interrupting an upload leaves the site half-replaced, with a new
+# index.html pointing at a bundle that hasn't finished transferring.
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # `npm ci` (not `install`) so the build uses exactly the locked
+      # dependency tree and can't silently pick up a new transitive version.
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build static web bundle
+        working-directory: app
+        run: npm run build
+
+      # Catches the failure mode this workflow exists to prevent: shipping a
+      # directory with no index for Apache to serve.
+      - name: Verify build output
+        run: |
+          test -f app/dist/index.html || { echo "::error::app/dist/index.html missing — refusing to deploy"; exit 1; }
+          test -f app/dist/.htaccess || { echo "::error::app/dist/.htaccess missing — SPA routes would 404"; exit 1; }
+          echo "Build output:"
+          ls -la app/dist/
+
+      - name: Upload to Hostinger over FTPS
+        # Third-party action, so it is pinned to a commit SHA rather than a
+        # tag: this step receives the hosting credentials, and a tag can be
+        # moved to point at different code. Note this repo has both a tag and a
+        # branch called v4.4.0 pointing at different commits — the SHA below is
+        # the tag, i.e. the actual release.
+        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_HOST }}
+          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          # Explicit TLS. Plain "ftp" would put the hosting account password
+          # and the whole transfer on the wire in clear text.
+          protocol: ftps
+          local-dir: ./app/dist/
+          server-dir: ${{ vars.HOSTINGER_SERVER_DIR || 'public_html/' }}
+          # Incremental sync: only changed files are transferred. Left at the
+          # default (no clean slate) so the upload cannot delete anything else
+          # living in the web root. The trade-off is that superseded hashed
+          # bundles accumulate under _expo/ and want an occasional manual sweep.
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.DS_Store
