@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
-import { Card, Chip } from "../../components/ui";
+import { Card, Chip, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -55,10 +55,12 @@ export default function PortalLeadDetail({ token, leadId, onBack, onChanged }) {
 
       <Card style={{ marginTop: spacing.md }}>
         <Text style={type.label}>Requested offering</Text>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-          <Text style={{ fontWeight: "700" }}>{lead.offeringSnapshot?.name || "General inquiry"}</Text>
-          {lead.offeringSnapshot?.amount ? <Text style={{ fontWeight: "700" }}>${lead.offeringSnapshot.amount}</Text> : null}
-        </View>
+        <SplitRow
+          style={{ marginTop: 4 }}
+          align="flex-start"
+          left={<Text style={{ fontWeight: "700" }}>{lead.offeringSnapshot?.name || "General inquiry"}</Text>}
+          right={lead.offeringSnapshot?.amount ? <Text style={{ fontWeight: "700" }}>${lead.offeringSnapshot.amount}</Text> : null}
+        />
         <Text style={type.caption}>Snapshot captured at submission — not linked to current catalog</Text>
       </Card>
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, Text, ActivityIndicator } from "react-native";
-import { Card, Badge, SecondaryButton } from "../../components/ui";
+import { Card, Badge, SecondaryButton, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -43,19 +43,22 @@ export default function AdminReports({ token }) {
       {reports.length === 0 && <Text style={type.caption}>No reports have been submitted.</Text>}
       {reports.map((r) => (
         <Card key={r.id} style={{ marginBottom: spacing.md }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: "700", marginBottom: 2 }}>{r.offeringName}</Text>
-              <Text style={type.caption}>{r.providerName}</Text>
-              <Text style={{ marginTop: 4 }}>{r.reason}</Text>
-              {r.details ? <Text style={[type.caption, { marginTop: 2 }]}>{r.details}</Text> : null}
-            </View>
-            <Badge label={r.status} tone={TONE[r.status] || "warn"} />
-          </View>
+          <SplitRow
+            align="flex-start"
+            left={
+              <>
+                <Text style={{ fontWeight: "700", marginBottom: 2 }}>{r.offeringName}</Text>
+                <Text style={type.caption}>{r.providerName}</Text>
+                <Text style={{ marginTop: 4 }}>{r.reason}</Text>
+                {r.details ? <Text style={[type.caption, { marginTop: 2 }]}>{r.details}</Text> : null}
+              </>
+            }
+            right={<Badge label={r.status} tone={TONE[r.status] || "warn"} />}
+          />
           {r.status === "open" && (
-            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
-              <SecondaryButton title="Mark resolved" onPress={() => setStatus(r, "resolved")} disabled={savingId === r.id} style={{ flex: 1 }} />
-              <SecondaryButton title="Dismiss" onPress={() => setStatus(r, "dismissed")} disabled={savingId === r.id} style={{ flex: 1 }} />
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm, flexWrap: "wrap" }}>
+              <SecondaryButton title="Mark resolved" onPress={() => setStatus(r, "resolved")} disabled={savingId === r.id} style={{ flex: 1, minWidth: 130 }} />
+              <SecondaryButton title="Dismiss" onPress={() => setStatus(r, "dismissed")} disabled={savingId === r.id} style={{ flex: 1, minWidth: 130 }} />
             </View>
           )}
         </Card>

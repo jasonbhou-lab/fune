@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, ScrollView, Text, ActivityIndicator } from "react-native";
-import { Card } from "../../components/ui";
+import { Card, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { colors, spacing, type } from "../../theme";
 
@@ -30,10 +30,12 @@ export default function AdminAnalytics({ token }) {
       <Card style={{ marginBottom: spacing.md }}>
         <Text style={[type.label, { marginBottom: spacing.sm }]}>Funnel — last 30 days</Text>
         {Object.keys(LABELS).map((key) => (
-          <View key={key} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}>
-            <Text>{LABELS[key]}</Text>
-            <Text style={{ fontWeight: "700" }}>{funnel.last30Days[key]}</Text>
-          </View>
+          <SplitRow
+            key={key}
+            style={{ paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}
+            left={<Text>{LABELS[key]}</Text>}
+            right={<Text style={{ fontWeight: "700" }}>{funnel.last30Days[key]}</Text>}
+          />
         ))}
         <Text style={[type.caption, { marginTop: spacing.sm }]}>All-time totals: {Object.keys(LABELS).map((k) => `${LABELS[k]} ${funnel.allTime[k]}`).join(" · ")}</Text>
       </Card>
@@ -42,10 +44,12 @@ export default function AdminAnalytics({ token }) {
         <Text style={[type.label, { marginBottom: spacing.sm }]}>Top searched categories — last {topCategories.windowDays} days</Text>
         {topCategories.categories.length === 0 && <Text style={type.caption}>No search activity yet.</Text>}
         {topCategories.categories.map((c) => (
-          <View key={c.key} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}>
-            <Text>{c.key}</Text>
-            <Text style={{ fontWeight: "700" }}>{c.count}</Text>
-          </View>
+          <SplitRow
+            key={c.key}
+            style={{ paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}
+            left={<Text>{c.key}</Text>}
+            right={<Text style={{ fontWeight: "700" }}>{c.count}</Text>}
+          />
         ))}
       </Card>
 
@@ -53,10 +57,12 @@ export default function AdminAnalytics({ token }) {
         <Text style={[type.label, { marginBottom: spacing.sm }]}>Top searched geographies — last {topCategories.windowDays} days</Text>
         {topCategories.zips.length === 0 && <Text style={type.caption}>No search activity yet.</Text>}
         {topCategories.zips.map((z) => (
-          <View key={z.key} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}>
-            <Text>{z.key}</Text>
-            <Text style={{ fontWeight: "700" }}>{z.count}</Text>
-          </View>
+          <SplitRow
+            key={z.key}
+            style={{ paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.line }}
+            left={<Text>{z.key}</Text>}
+            right={<Text style={{ fontWeight: "700" }}>{z.count}</Text>}
+          />
         ))}
       </Card>
     </ScrollView>

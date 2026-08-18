@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, ActivityIndicator } from "react-native";
-import { Card, Banner } from "../../components/ui";
+import { Card, Banner, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { colors, spacing, type } from "../../theme";
 
@@ -42,10 +42,12 @@ export default function PortalDashboard({ token }) {
 
       <Text style={[type.label, { marginBottom: spacing.sm }]}>Recent activity</Text>
       {data.activity.map((a, i) => (
-        <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line }}>
-          <Text style={{ fontSize: 13 }}>{a.label}</Text>
-          <Text style={type.caption}>{new Date(a.at).toLocaleDateString()}</Text>
-        </View>
+        <SplitRow
+          key={i}
+          style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line }}
+          left={<Text style={{ fontSize: 13 }}>{a.label}</Text>}
+          right={<Text style={type.caption}>{new Date(a.at).toLocaleDateString()}</Text>}
+        />
       ))}
     </ScrollView>
   );

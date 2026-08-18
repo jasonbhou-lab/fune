@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, FlatList, ScrollView, ActivityIndicator } from "react-native";
-import { Card, Badge, Chip } from "../../components/ui";
+import { Card, Badge, Chip, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { colors, spacing, type } from "../../theme";
 
@@ -81,10 +81,11 @@ export default function PortalLeads({ token, onSelect, refreshKey }) {
           renderItem={({ item }) => (
             <Pressable onPress={() => onSelect(item.id)}>
               <Card>
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={{ fontWeight: "700" }}>{item.firstName} {item.lastName}</Text>
-                  <Badge label={item.status} tone={STATUS_TONE[item.status] || "ok"} />
-                </View>
+                <SplitRow
+                  align="flex-start"
+                  left={<Text style={{ fontWeight: "700" }}>{item.firstName} {item.lastName}</Text>}
+                  right={<Badge label={item.status} tone={STATUS_TONE[item.status] || "ok"} />}
+                />
                 <Text style={type.caption}>
                   {item.offeringName} · {item.needType?.replace("_", " ")} · {new Date(item.createdAt).toLocaleString()}
                 </Text>

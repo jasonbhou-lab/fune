@@ -25,6 +25,33 @@ export function Card({ children, style }) {
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+/**
+ * A label-on-the-left, value-on-the-right row.
+ *
+ * Nearly every list and detail screen in the portal and admin areas hand-rolled
+ * this as `flexDirection: "row", justifyContent: "space-between"` with a bare
+ * <Text> on the left. That looks right until the left text is long — a category
+ * key, an offering name, an activity label — at which point flexbox shrinks
+ * whichever side it likes: the count gets pushed off, or a fixed-size control
+ * like a toggle is squashed below its own width. It only shows up on a narrow
+ * viewport, so it was invisible on a desktop browser.
+ *
+ * Encoding it once means every screen behaves the same at every width:
+ *  - the left side takes the remaining space and wraps within it. minWidth: 0
+ *    is required on web, where a flex child otherwise refuses to shrink below
+ *    its content's intrinsic width and overflows the row instead of wrapping;
+ *  - the right side never shrinks, so badges, prices, and toggles keep their
+ *    natural size.
+ */
+export function SplitRow({ left, right, style, align = "center", gap = spacing.sm }) {
+  return (
+    <View style={[{ flexDirection: "row", alignItems: align, gap }, style]}>
+      <View style={{ flex: 1, minWidth: 0 }}>{left}</View>
+      {right != null ? <View style={{ flexShrink: 0 }}>{right}</View> : null}
+    </View>
+  );
+}
+
 export function PrimaryButton({ title, onPress, disabled, loading, style }) {
   return (
     <Pressable
@@ -147,7 +174,9 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: "600" },
   chipTextActive: { color: colors.primaryInk },
-  badge: { borderRadius: 20, paddingVertical: 3, paddingHorizontal: 8, alignSelf: "flex-start" },
+  // flexShrink: 0 so a badge sitting beside a long label keeps its size instead
+  // of being compressed until its own text wraps mid-word.
+  badge: { borderRadius: 20, paddingVertical: 3, paddingHorizontal: 8, alignSelf: "flex-start", flexShrink: 0 },
   badgeText: { fontSize: 11, fontWeight: "700" },
   fieldLabel: { ...{ fontSize: 11, color: colors.faint, textTransform: "uppercase", letterSpacing: 0.5 }, marginBottom: 4 },
   input: {

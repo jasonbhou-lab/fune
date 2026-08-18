@@ -92,7 +92,7 @@ export default function PortalCatalogEditor({ token, offering, locationId, onDon
       </View>
 
       <Text style={[type.label, { marginBottom: 6 }]}>Price type</Text>
-      <View style={{ flexDirection: "row", marginBottom: spacing.md }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: spacing.md }}>
         {PRICE_TYPES.map((p) => (
           <Chip key={p.id} label={p.label} active={priceType === p.id} onPress={() => setPriceType(p.id)} />
         ))}
@@ -103,8 +103,12 @@ export default function PortalCatalogEditor({ token, offering, locationId, onDon
       ) : null}
       {priceType === "range" ? (
         <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <TextField label="Min (USD)" value={amountMin} onChangeText={setAmountMin} keyboardType="numeric" />
-          <TextField label="Max (USD)" value={amountMax} onChangeText={setAmountMax} keyboardType="numeric" />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <TextField label="Min (USD)" value={amountMin} onChangeText={setAmountMin} keyboardType="numeric" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <TextField label="Max (USD)" value={amountMax} onChangeText={setAmountMax} keyboardType="numeric" />
+          </View>
         </View>
       ) : null}
 
@@ -126,9 +130,9 @@ export default function PortalCatalogEditor({ token, offering, locationId, onDon
         </View>
       ) : null}
 
-      <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.xl }}>
-        <SecondaryButton title="Save draft" onPress={() => save("draft")} disabled={saving} style={{ flex: 1 }} />
-        <PrimaryButton title="Publish" onPress={() => save("published")} loading={saving} style={{ flex: 1 }} />
+      <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.xl, flexWrap: "wrap" }}>
+        <SecondaryButton title="Save draft" onPress={() => save("draft")} disabled={saving} style={{ flex: 1, minWidth: 130 }} />
+        <PrimaryButton title="Publish" onPress={() => save("published")} loading={saving} style={{ flex: 1, minWidth: 130 }} />
       </View>
     </ScrollView>
   );

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
-import { Card } from "../../components/ui";
+import { Card, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { ATTRIBUTES } from "../../attributes";
 import { colors, spacing, type } from "../../theme";
@@ -73,20 +73,12 @@ export default function PortalLocations({ token }) {
             {loc.address}, {loc.city}, {loc.state} {loc.zip}
           </Text>
           {ATTRIBUTES.map((a) => (
-            <View
+            <SplitRow
               key={a.key}
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                paddingVertical: 8,
-                borderTopWidth: 1,
-                borderTopColor: colors.line,
-              }}
-            >
-              <Text style={{ fontSize: 13 }}>{a.label}</Text>
-              <Toggle value={Boolean(loc[a.key])} onChange={() => toggle(loc, a.key)} />
-            </View>
+              style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.line }}
+              left={<Text style={{ fontSize: 13 }}>{a.label}</Text>}
+              right={<Toggle value={Boolean(loc[a.key])} onChange={() => toggle(loc, a.key)} />}
+            />
           ))}
         </Card>
       ))}

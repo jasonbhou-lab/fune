@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Platform, View, Text, Pressable, FlatList, ActivityIndicator } from "react-native";
-import { Card, Badge, SecondaryButton, TextField, PrimaryButton, Banner } from "../../components/ui";
+import { Card, Badge, SecondaryButton, TextField, PrimaryButton, Banner, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -75,7 +75,7 @@ export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey
     <View style={{ flex: 1 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm, flexWrap: "wrap", gap: spacing.sm }}>
         <Text style={type.h3}>Catalog & pricing</Text>
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <SecondaryButton title="Export CSV" onPress={runExport} disabled={exporting} style={{ paddingVertical: 6, paddingHorizontal: 10 }} />
           <SecondaryButton title="Import CSV" onPress={() => setImportOpen((v) => !v)} style={{ paddingVertical: 6, paddingHorizontal: 10 }} />
           <SecondaryButton title="+ New offering" onPress={onCreateNew} style={{ paddingVertical: 6, paddingHorizontal: 10 }} />
@@ -112,16 +112,19 @@ export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey
         renderItem={({ item }) => (
           <Pressable onPress={() => onSelect(item)}>
             <Card>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={{ fontWeight: "700", flex: 1 }}>{item.name}</Text>
-                <View style={{ flexDirection: "row", gap: 6 }}>
-                  {item.stale && <Badge label="Needs review" tone="warn" />}
-                  <Badge
-                    label={item.status.replace("_", " ")}
-                    tone={item.status === "published" ? "ok" : item.status === "pending_review" ? "warn" : "warn"}
-                  />
-                </View>
-              </View>
+              <SplitRow
+                align="flex-start"
+                left={<Text style={{ fontWeight: "700" }}>{item.name}</Text>}
+                right={
+                  <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {item.stale && <Badge label="Needs review" tone="warn" />}
+                    <Badge
+                      label={item.status.replace("_", " ")}
+                      tone={item.status === "published" ? "ok" : item.status === "pending_review" ? "warn" : "warn"}
+                    />
+                  </View>
+                }
+              />
               <Text style={type.caption}>
                 {item.category} · {item.price.text} · reviewed {new Date(item.reviewedDate).toLocaleDateString()}
               </Text>

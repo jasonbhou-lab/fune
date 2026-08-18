@@ -41,9 +41,9 @@ function CategoryRow({ category, token, onChanged }) {
       <Text style={type.caption}>{category.id}</Text>
       <TextField label="Label" value={label} onChangeText={setLabel} />
       <TextField label="Examples" value={examples} onChangeText={setExamples} />
-      <View style={{ flexDirection: "row", gap: spacing.sm }}>
-        <SecondaryButton title="Save" onPress={save} disabled={saving} style={{ flex: 1 }} />
-        <SecondaryButton title="Delete" onPress={remove} disabled={saving} style={{ flex: 1 }} />
+      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+        <SecondaryButton title="Save" onPress={save} disabled={saving} style={{ flex: 1, minWidth: 120 }} />
+        <SecondaryButton title="Delete" onPress={remove} disabled={saving} style={{ flex: 1, minWidth: 120 }} />
       </View>
     </Card>
   );
