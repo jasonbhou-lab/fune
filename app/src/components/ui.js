@@ -1,6 +1,7 @@
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator } from "react-native";
 import { colors, spacing } from "../theme";
+import { useContentWidth } from "../responsive";
 
 // react-navigation's native-stack renders each screen as a viewport-fixed
 // overlay on web (a react-native-screens quirk that ignores any width
@@ -10,17 +11,12 @@ import { colors, spacing } from "../theme";
 // the outer view fills the real (full-viewport) box react-navigation hands
 // it, and the inner one is the actual constrained, centered column.
 export function Screen({ children, style }) {
+  // null on native and on phone-width web, where content should use the full
+  // width rather than being squeezed into a half-width column.
+  const contentWidth = useContentWidth();
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View
-        style={[
-          { flex: 1, width: "100%", padding: spacing.lg },
-          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
-          style,
-        ]}
-      >
-        {children}
-      </View>
+      <View style={[{ flex: 1, width: "100%", padding: spacing.lg }, contentWidth, style]}>{children}</View>
     </View>
   );
 }

@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { View, Text, Pressable, ScrollView, Platform } from "react-native";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { TextField, PrimaryButton, SecondaryButton, Banner } from "../../components/ui";
 import GoogleSignInButton from "../../components/GoogleSignInButton";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
+import { useContentWidth } from "../../responsive";
 
 export default function SignInScreen({ navigation }) {
   const { consumerLogin, consumerSignup, consumerGoogleAuth } = useAppState();
+  const contentWidth = useContentWidth();
   const [mode, setMode] = useState("signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,7 +51,7 @@ export default function SignInScreen({ navigation }) {
   return (
     <LinearGradient colors={[colors.primary, colors.accent]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flex: 1 }}>
       <ScrollView
-        contentContainerStyle={[{ flexGrow: 1, padding: spacing.lg, paddingTop: spacing.xxl, width: "100%" }, Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" }]}
+        contentContainerStyle={[{ flexGrow: 1, padding: spacing.lg, paddingTop: spacing.xxl, width: "100%" }, contentWidth]}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={[type.display, onGradient]}>GLP</Text>

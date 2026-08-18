@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, Platform } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { useAppState } from "../../context/AppState";
 import { api } from "../../api";
 import { colors, spacing } from "../../theme";
+import { useContentWidth } from "../../responsive";
 import PortalDashboard from "./PortalDashboard";
 import PortalCatalog from "./PortalCatalog";
 import PortalCatalogEditor from "./PortalCatalogEditor";
@@ -19,6 +20,7 @@ const NAV = [
 
 export default function PortalHomeScreen({ navigation }) {
   const { providerUser, providerToken, providerLogout, consumerToken } = useAppState();
+  const contentWidth = useContentWidth();
   const [view, setView] = useState("dashboard");
   const [editingOffering, setEditingOffering] = useState(undefined); // undefined = list, null = new, object = edit
   const [selectedLeadId, setSelectedLeadId] = useState(null);
@@ -55,9 +57,15 @@ export default function PortalHomeScreen({ navigation }) {
           borderBottomWidth: 1,
           borderBottomColor: colors.line,
           backgroundColor: colors.bgCard,
+          // The org name, four nav items, and Sign out need more than a phone's
+          // width. Without wrapping they squash and the labels break mid-word.
+          // Wrapping is inert on a wide screen, where the row still fits on one
+          // line. Matches AdminHomeScreen's nav bar.
+          flexWrap: "wrap",
+          rowGap: spacing.sm,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.lg }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.lg, flexWrap: "wrap", rowGap: spacing.sm }}>
           <Text style={{ fontWeight: "700" }}>{providerUser?.orgName}</Text>
           {NAV.map((n) => (
             <Pressable key={n.id} onPress={() => goto(n.id)}>
@@ -75,7 +83,7 @@ export default function PortalHomeScreen({ navigation }) {
       <View
         style={[
           { flex: 1, width: "100%", padding: spacing.lg },
-          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
+          contentWidth,
         ]}
       >
         {view === "dashboard" && <PortalDashboard token={providerToken} />}

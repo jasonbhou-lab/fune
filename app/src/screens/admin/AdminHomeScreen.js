@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { View, Text, Pressable, Platform } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing } from "../../theme";
+import { useContentWidth } from "../../responsive";
 import AdminOrganizations from "./AdminOrganizations";
 import AdminModeration from "./AdminModeration";
 import AdminTaxonomy from "./AdminTaxonomy";
@@ -20,6 +21,7 @@ const NAV = [
 
 export default function AdminHomeScreen({ navigation }) {
   const { adminUser, adminToken, adminLogout, consumerToken } = useAppState();
+  const contentWidth = useContentWidth();
   const [view, setView] = useState("orgs");
 
   const signOut = async () => {
@@ -60,7 +62,7 @@ export default function AdminHomeScreen({ navigation }) {
       <View
         style={[
           { flex: 1, width: "100%", padding: spacing.lg },
-          Platform.OS === "web" && { maxWidth: "50%", alignSelf: "center" },
+          contentWidth,
         ]}
       >
         {view === "orgs" && <AdminOrganizations token={adminToken} />}
