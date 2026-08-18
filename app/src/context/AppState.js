@@ -16,6 +16,13 @@ export function AppStateProvider({ children }) {
   const [consumerUser, setConsumerUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Clicking the link in a password-reset email signs the user in — that's how
+  // Supabase authorizes the password change. Without tracking it separately,
+  // that session would satisfy the navigator's `consumerToken ? Main` check and
+  // drop the user straight into the app, never showing them the form to choose
+  // a new password. While this is true the gate stays up in "reset" mode.
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
+
   const [providerSession, setProviderSession] = useState(null);
   const [providerUser, setProviderUser] = useState(null);
 
@@ -49,9 +56,16 @@ export function AppStateProvider({ children }) {
       setAuthLoading(false);
     })();
 
-    const { data: subC } = supabaseConsumer.auth.onAuthStateChange((_event, session) => {
+    const { data: subC } = supabaseConsumer.auth.onAuthStateChange((event, session) => {
+      // Fires when the app is opened from a reset email. detectSessionInUrl is
+      // already enabled for this client on web, so the recovery token in the
+      // URL has been exchanged for a session by the time this runs.
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       setConsumerSession(session);
-      if (!session) setConsumerUser(null);
+      if (!session) {
+        setConsumerUser(null);
+        setPasswordRecovery(false);
+      }
     });
     const { data: subP } = supabaseProvider.auth.onAuthStateChange((_event, session) => {
       setProviderSession(session);
@@ -104,7 +118,52 @@ export function AppStateProvider({ children }) {
     // picked up by onAuthStateChange after the redirect back.
   };
 
+  /**
+   * Step 1 of a password reset: email the user a recovery link.
+   *
+   * Deliberately resolves the same way whether or not an account exists for the
+   * address. Supabase does not distinguish either, and surfacing the difference
+   * would turn this form into an account-enumeration oracle — anyone could
+   * discover which of their contacts had used the service, which for a funeral
+   * price comparison site is unusually sensitive. The caller shows a neutral
+   * "if an account exists, check your email" message.
+   */
+  const consumerRequestPasswordReset = async (email) => {
+    const { error } = await supabaseConsumer.auth.resetPasswordForEmail(email, {
+      // Where the emailed link lands. Must be listed under Authentication >
+      // URL Configuration > Redirect URLs in the Supabase dashboard, or the
+      // link falls back to the project's Site URL and the reset silently
+      // fails to reach this app.
+      redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+    });
+    if (error) throw new Error(error.message);
+  };
+
+  /**
+   * Step 2: set the new password, using the session the recovery link created.
+   */
+  const consumerCompletePasswordReset = async (newPassword) => {
+    const { data, error } = await supabaseConsumer.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message);
+    setPasswordRecovery(false);
+    const profile = await fetchProfile(supabaseConsumer, data.user.id);
+    setConsumerUser(profile);
+    return profile;
+  };
+
+  /**
+   * Abandon a reset. The recovery link already signed them in, so leaving the
+   * form without signing out would silently grant access on an unchanged
+   * password — sign out so they land back on the gate.
+   */
+  const consumerCancelPasswordReset = async () => {
+    setPasswordRecovery(false);
+    await supabaseConsumer.auth.signOut();
+    setConsumerUser(null);
+  };
+
   const consumerLogout = async () => {
+    setPasswordRecovery(false);
     await supabaseConsumer.auth.signOut();
     setConsumerUser(null);
   };
@@ -202,6 +261,10 @@ export function AppStateProvider({ children }) {
       consumerSignup,
       consumerGoogleAuth,
       consumerLogout,
+      passwordRecovery,
+      consumerRequestPasswordReset,
+      consumerCompletePasswordReset,
+      consumerCancelPasswordReset,
       providerToken,
       providerUser,
       providerLogin,
@@ -215,7 +278,7 @@ export function AppStateProvider({ children }) {
       toast,
       showToast,
     }),
-    [location, needType, compareTray, filters, consumerToken, consumerUser, authLoading, providerToken, providerUser, adminToken, adminUser, toast]
+    [location, needType, compareTray, filters, consumerToken, consumerUser, authLoading, passwordRecovery, providerToken, providerUser, adminToken, adminUser, toast]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

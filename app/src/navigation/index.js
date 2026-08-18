@@ -108,7 +108,7 @@ function MainTabs() {
 }
 
 export default function RootNavigator() {
-  const { consumerToken, authLoading } = useAppState();
+  const { consumerToken, authLoading, passwordRecovery } = useAppState();
 
   if (authLoading) {
     return (
@@ -121,7 +121,10 @@ export default function RootNavigator() {
   return (
     <NavigationContainer>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
-        {consumerToken ? (
+        {/* A password-recovery link signs the user in before they have chosen a
+            new password. Keep the gate up in that case, or they would be
+            dropped into the app and never see the reset form. */}
+        {consumerToken && !passwordRecovery ? (
           <RootStack.Screen name="Main" component={MainTabs} />
         ) : (
           <RootStack.Screen name="CreateAccount" component={SignInScreen} />
