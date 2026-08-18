@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { Linking, Platform } from "react-native";
 import { DEFAULT_FILTERS } from "../attributes";
 import { supabaseConsumer, supabaseProvider, supabaseAdmin, fetchProfile } from "../supabaseClient";
+import { buildPasswordResetRedirectUrl, parseAuthParamsFromUrl, isPasswordRecoveryUrl, describeAuthError } from "../deepLink";
 
 const AppStateContext = createContext(null);
 
@@ -22,6 +24,9 @@ export function AppStateProvider({ children }) {
   // drop the user straight into the app, never showing them the form to choose
   // a new password. While this is true the gate stays up in "reset" mode.
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  // Set when a recovery link comes back unusable (expired, already consumed).
+  // Surfaced on the gate so the user can request a fresh one.
+  const [recoveryError, setRecoveryError] = useState(null);
 
   const [providerSession, setProviderSession] = useState(null);
   const [providerUser, setProviderUser] = useState(null);
@@ -82,6 +87,72 @@ export function AppStateProvider({ children }) {
     };
   }, []);
 
+  /**
+   * Turn a recovery deep link into a usable recovery state.
+   *
+   * Native only. On web, detectSessionInUrl is enabled for the consumer client,
+   * so supabase-js consumes the URL itself and emits PASSWORD_RECOVERY —
+   * nothing to do here. On native there is no window for it to read, so the
+   * tokens have to be exchanged by hand.
+   *
+   * Order matters: the recovery flag is set BEFORE the session is installed.
+   * setSession emits SIGNED_IN rather than PASSWORD_RECOVERY (that event only
+   * comes from the URL detection web uses), so without setting the flag first
+   * the navigator would see a token with no recovery flag and flash the main
+   * app before the reset form appeared.
+   */
+  const handleRecoveryDeepLink = async (url) => {
+    if (!url || !isPasswordRecoveryUrl(url)) return;
+    const params = parseAuthParamsFromUrl(url);
+
+    const failure = describeAuthError(params);
+    if (failure) {
+      setRecoveryError(failure);
+      setPasswordRecovery(false);
+      return;
+    }
+
+    setRecoveryError(null);
+    setPasswordRecovery(true);
+
+    try {
+      if (params.code) {
+        // Only reachable if flowType is switched to pkce; harmless otherwise.
+        const { error } = await supabaseConsumer.auth.exchangeCodeForSession(params.code);
+        if (error) throw error;
+      } else if (params.access_token && params.refresh_token) {
+        const { error } = await supabaseConsumer.auth.setSession({
+          access_token: params.access_token,
+          refresh_token: params.refresh_token,
+        });
+        if (error) throw error;
+      } else {
+        throw new Error("The reset link was missing its credentials.");
+      }
+    } catch (e) {
+      setPasswordRecovery(false);
+      setRecoveryError(`That reset link could not be used: ${e.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+
+    let cancelled = false;
+    // The link may have launched the app cold...
+    Linking.getInitialURL()
+      .then((url) => {
+        if (!cancelled) return handleRecoveryDeepLink(url);
+      })
+      .catch(() => {});
+    // ...or arrived while it was already open.
+    const sub = Linking.addEventListener("url", ({ url }) => handleRecoveryDeepLink(url));
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
+
   const consumerToken = consumerSession?.access_token || null;
   const providerToken = providerSession?.access_token || null;
   const adminToken = adminSession?.access_token || null;
@@ -130,11 +201,12 @@ export function AppStateProvider({ children }) {
    */
   const consumerRequestPasswordReset = async (email) => {
     const { error } = await supabaseConsumer.auth.resetPasswordForEmail(email, {
-      // Where the emailed link lands. Must be listed under Authentication >
+      // Where the emailed link lands: the page origin on web, the app's own
+      // glp:// scheme on native. Both must be listed under Authentication >
       // URL Configuration > Redirect URLs in the Supabase dashboard, or the
       // link falls back to the project's Site URL and the reset silently
       // fails to reach this app.
-      redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+      redirectTo: buildPasswordResetRedirectUrl(),
     });
     if (error) throw new Error(error.message);
   };
@@ -158,12 +230,16 @@ export function AppStateProvider({ children }) {
    */
   const consumerCancelPasswordReset = async () => {
     setPasswordRecovery(false);
+    setRecoveryError(null);
     await supabaseConsumer.auth.signOut();
     setConsumerUser(null);
   };
 
+  const clearRecoveryError = () => setRecoveryError(null);
+
   const consumerLogout = async () => {
     setPasswordRecovery(false);
+    setRecoveryError(null);
     await supabaseConsumer.auth.signOut();
     setConsumerUser(null);
   };
@@ -262,6 +338,8 @@ export function AppStateProvider({ children }) {
       consumerGoogleAuth,
       consumerLogout,
       passwordRecovery,
+      recoveryError,
+      clearRecoveryError,
       consumerRequestPasswordReset,
       consumerCompletePasswordReset,
       consumerCancelPasswordReset,
@@ -278,7 +356,7 @@ export function AppStateProvider({ children }) {
       toast,
       showToast,
     }),
-    [location, needType, compareTray, filters, consumerToken, consumerUser, authLoading, passwordRecovery, providerToken, providerUser, adminToken, adminUser, toast]
+    [location, needType, compareTray, filters, consumerToken, consumerUser, authLoading, passwordRecovery, recoveryError, providerToken, providerUser, adminToken, adminUser, toast]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

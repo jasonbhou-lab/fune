@@ -21,6 +21,8 @@ export default function SignInScreen({ navigation }) {
     consumerSignup,
     consumerGoogleAuth,
     passwordRecovery,
+    recoveryError,
+    clearRecoveryError,
     consumerRequestPasswordReset,
     consumerCompletePasswordReset,
     consumerCancelPasswordReset,
@@ -47,8 +49,20 @@ export default function SignInScreen({ navigation }) {
     }
   }, [passwordRecovery]);
 
+  // A link that came back expired or already-used can't be completed, so send
+  // the user to the request form with the reason visible rather than showing a
+  // password form that would fail on submit.
+  useEffect(() => {
+    if (recoveryError) {
+      setMode("forgot");
+      setError(recoveryError);
+      setNotice(null);
+    }
+  }, [recoveryError]);
+
   const go = (next) => {
     setMode(next);
+    clearRecoveryError?.();
     setError(null);
     setNotice(null);
     setPassword("");
@@ -84,6 +98,7 @@ export default function SignInScreen({ navigation }) {
     setLoading(true);
     try {
       await consumerRequestPasswordReset(address);
+      clearRecoveryError?.();
       // Worded so it reveals nothing about whether the address has an account —
       // see consumerRequestPasswordReset for why that matters here.
       setNotice(`If an account exists for ${address}, a reset link is on its way. The link expires after a short while.`);
