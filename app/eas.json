@@ -10,6 +10,23 @@
         "gradleCommand": ":app:assembleDebug"
       }
     },
+    "development-simulator": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        // Builds for the iOS Simulator instead of a device. This is the only
+        // iOS build that needs no Apple Developer account: a device build
+        // requires a distribution certificate, a provisioning profile, and the
+        // target device's UDID registered, none of which exist for this project.
+        //
+        // Deep links are still testable here, which is the point:
+        //   xcrun simctl openurl booted "glp://reset-password?type=recovery"
+        // proves the scheme is registered in Info.plist and the handler runs.
+        //
+        // Requires a Mac with Xcode to run the resulting .app.
+        "simulator": true
+      }
+    },
     "preview": {
       "distribution": "internal"
     },
