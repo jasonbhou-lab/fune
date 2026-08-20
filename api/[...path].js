@@ -2,9 +2,17 @@ import app from "../server/src/app.js";
 
 // Vercel Function that serves the whole Express API.
 //
-// A catch-all filename is used so that every /api/** path reaches one function
-// and the Express router does the routing, rather than splitting the API into
-// dozens of separate functions. The double bracket form also matches bare /api.
+// A catch-all filename so every /api/** path reaches one function and the
+// Express router does the routing, rather than splitting the API into dozens of
+// separate functions.
+//
+// The filename is [...path], single brackets. It was [[...path]] first, which is
+// a Next.js-only optional-catch-all convention: plain Vercel functions did not
+// recognise it and treated it as a single dynamic segment, so /api/categories
+// worked while /api/portal/leads, /api/admin/orgs and /api/offerings/:id all
+// returned Vercel's own 404 without ever reaching Express. Local testing could
+// not catch that, because calling the handler directly bypasses Vercel's
+// file-based routing entirely.
 //
 // The URL normalisation below is deliberate. Vercel's own Express guide does not
 // state whether the function receives the full original path (/api/categories)
