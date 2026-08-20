@@ -8,22 +8,29 @@ export const supabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const url = SUPABASE_URL || "https://placeholder.supabase.co";
 const key = SUPABASE_ANON_KEY || "placeholder";
 
-// Three independent Supabase Auth clients — one per role (consumer, provider,
-// platform admin) — each with its own storage key. This lets someone be
-// signed in as a consumer AND as a provider (or admin) at the same time in
-// the same app instance, matching how the rest of this app already treats
-// those as separate, coexisting sessions rather than one unified login.
-function makeClient(storageKey, detectSessionInUrl) {
-  return createClient(url, key, {
-    auth: { storage: AsyncStorage, storageKey, autoRefreshToken: true, persistSession: true, detectSessionInUrl },
-  });
-}
-
-// Only the consumer client needs to watch for an OAuth redirect (Google
-// sign-in is consumer-only for now).
-export const supabaseConsumer = makeClient("fpc-consumer-auth", typeof window !== "undefined");
-export const supabaseProvider = makeClient("fpc-provider-auth", false);
-export const supabaseAdmin = makeClient("fpc-admin-auth", false);
+// One auth client, one session.
+//
+// This used to be three independent clients — consumer, provider, admin — each
+// with its own storage key, so one person could hold a consumer session and a
+// provider session simultaneously. That only made sense while each role had its
+// own login screen. Now there is a single sign-in form and the account's role
+// decides where it lands, so a second concurrent session has nothing to
+// represent: signing in is signing in, and the role comes from the profile.
+//
+// The trade-off, deliberately accepted: someone who is both a consumer and a
+// provider can no longer be in both at once, and must sign out to switch.
+export const supabaseAuth = createClient(url, key, {
+  auth: {
+    storage: AsyncStorage,
+    storageKey: "glp-auth",
+    autoRefreshToken: true,
+    persistSession: true,
+    // Needed on web so a password-recovery link in the URL is exchanged for a
+    // session automatically. Native has no window to read and handles the
+    // deep link by hand — see deepLink.js.
+    detectSessionInUrl: typeof window !== "undefined",
+  },
+});
 
 export async function fetchProfile(client, userId) {
   const { data, error } = await client

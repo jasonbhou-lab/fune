@@ -20,10 +20,8 @@ import AccountScreen from "../screens/consumer/AccountScreen";
 import SignInScreen from "../screens/consumer/SignInScreen";
 import CommPrefsScreen from "../screens/consumer/CommPrefsScreen";
 
-import PortalLoginScreen from "../screens/portal/PortalLoginScreen";
 import PortalHomeScreen from "../screens/portal/PortalHomeScreen";
 
-import AdminLoginScreen from "../screens/admin/AdminLoginScreen";
 import AdminHomeScreen from "../screens/admin/AdminHomeScreen";
 
 const RootStack = createNativeStackNavigator();
@@ -108,7 +106,7 @@ function MainTabs() {
 }
 
 export default function RootNavigator() {
-  const { consumerToken, authLoading, passwordRecovery } = useAppState();
+  const { session, role, authLoading, passwordRecovery } = useAppState();
 
   if (authLoading) {
     return (
@@ -118,21 +116,29 @@ export default function RootNavigator() {
     );
   }
 
+  // There is one login form, so the account's role — not which screen they came
+  // through — decides where they land.
+  //
+  // A password-recovery link signs the user in before they have chosen a new
+  // password, so the gate stays up in that case regardless of role, or they
+  // would be routed into the app and never see the reset form.
+  //
+  // A session with no profile yet resolved also stays on the gate: routing on a
+  // null role would briefly show the consumer app to a provider or admin.
+  const signedIn = Boolean(session) && !passwordRecovery && Boolean(role);
+
   return (
     <NavigationContainer>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
-        {/* A password-recovery link signs the user in before they have chosen a
-            new password. Keep the gate up in that case, or they would be
-            dropped into the app and never see the reset form. */}
-        {consumerToken && !passwordRecovery ? (
-          <RootStack.Screen name="Main" component={MainTabs} />
+        {!signedIn ? (
+          <RootStack.Screen name="SignIn" component={SignInScreen} />
+        ) : role === "platform_admin" ? (
+          <RootStack.Screen name="AdminHome" component={AdminHomeScreen} />
+        ) : role === "provider" ? (
+          <RootStack.Screen name="PortalHome" component={PortalHomeScreen} />
         ) : (
-          <RootStack.Screen name="CreateAccount" component={SignInScreen} />
+          <RootStack.Screen name="Main" component={MainTabs} />
         )}
-        <RootStack.Screen name="PortalLogin" component={PortalLoginScreen} />
-        <RootStack.Screen name="PortalHome" component={PortalHomeScreen} />
-        <RootStack.Screen name="AdminLogin" component={AdminLoginScreen} />
-        <RootStack.Screen name="AdminHome" component={AdminHomeScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

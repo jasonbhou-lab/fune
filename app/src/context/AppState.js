@@ -1,10 +1,22 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Linking, Platform } from "react-native";
 import { DEFAULT_FILTERS } from "../attributes";
-import { supabaseConsumer, supabaseProvider, supabaseAdmin, fetchProfile } from "../supabaseClient";
+import { supabaseAuth, fetchProfile } from "../supabaseClient";
 import { buildPasswordResetRedirectUrl, parseAuthParamsFromUrl, isPasswordRecoveryUrl, describeAuthError } from "../deepLink";
 
 const AppStateContext = createContext(null);
+
+// Roles a person can choose for themselves on the signup form. platform_admin
+// is absent on purpose and the database enforces the same whitelist — see
+// handle_new_user() in supabase/schema.sql. Offering it here would let anyone
+// grant themselves the admin back office from a public form.
+export const SELF_SERVICE_ACCOUNT_TYPES = [
+  { id: "consumer", label: "I'm planning or arranging a funeral" },
+  { id: "provider", label: "I work for a funeral home or provider" },
+];
+
+// Provider roles that must hold a second factor before they get in.
+const MFA_REQUIRED_PROVIDER_ROLES = ["owner", "administrator"];
 
 export function AppStateProvider({ children }) {
   const [location, setLocation] = useState({ zip: "77494", city: "Katy", state: "TX" });
@@ -14,25 +26,20 @@ export function AppStateProvider({ children }) {
   const setFilters = (patch) => setFiltersState((prev) => ({ ...prev, ...patch }));
   const clearFilters = () => setFiltersState(DEFAULT_FILTERS);
 
-  const [consumerSession, setConsumerSession] = useState(null);
-  const [consumerUser, setConsumerUser] = useState(null);
+  // One session, one profile. The profile's role decides which part of the app
+  // the navigator shows; there is no separate per-role login or session.
+  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   // Clicking the link in a password-reset email signs the user in — that's how
   // Supabase authorizes the password change. Without tracking it separately,
-  // that session would satisfy the navigator's `consumerToken ? Main` check and
-  // drop the user straight into the app, never showing them the form to choose
-  // a new password. While this is true the gate stays up in "reset" mode.
+  // that session would satisfy the navigator's signed-in check and drop the
+  // user straight into the app, never showing them the form to choose a new
+  // password. While this is true the gate stays up in "reset" mode.
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   // Set when a recovery link comes back unusable (expired, already consumed).
-  // Surfaced on the gate so the user can request a fresh one.
   const [recoveryError, setRecoveryError] = useState(null);
-
-  const [providerSession, setProviderSession] = useState(null);
-  const [providerUser, setProviderUser] = useState(null);
-
-  const [adminSession, setAdminSession] = useState(null);
-  const [adminUser, setAdminUser] = useState(null);
 
   const [toast, setToast] = useState(null); // { message, tone }
   const showToast = (message, tone = "ok") => {
@@ -41,64 +48,32 @@ export function AppStateProvider({ children }) {
 
   useEffect(() => {
     (async () => {
-      const [{ data: c }, { data: p }, { data: a }] = await Promise.all([
-        supabaseConsumer.auth.getSession(),
-        supabaseProvider.auth.getSession(),
-        supabaseAdmin.auth.getSession(),
-      ]);
-      if (c.session) {
-        setConsumerSession(c.session);
-        setConsumerUser(await fetchProfile(supabaseConsumer, c.session.user.id));
-      }
-      if (p.session) {
-        setProviderSession(p.session);
-        setProviderUser(await fetchProfile(supabaseProvider, p.session.user.id));
-      }
-      if (a.session) {
-        setAdminSession(a.session);
-        setAdminUser(await fetchProfile(supabaseAdmin, a.session.user.id));
+      const { data } = await supabaseAuth.auth.getSession();
+      if (data.session) {
+        setSession(data.session);
+        setUser(await fetchProfile(supabaseAuth, data.session.user.id));
       }
       setAuthLoading(false);
     })();
 
-    const { data: subC } = supabaseConsumer.auth.onAuthStateChange((event, session) => {
-      // Fires when the app is opened from a reset email. detectSessionInUrl is
-      // already enabled for this client on web, so the recovery token in the
-      // URL has been exchanged for a session by the time this runs.
+    const { data: sub } = supabaseAuth.auth.onAuthStateChange((event, nextSession) => {
       if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
-      setConsumerSession(session);
-      if (!session) {
-        setConsumerUser(null);
+      setSession(nextSession);
+      if (!nextSession) {
+        setUser(null);
         setPasswordRecovery(false);
       }
     });
-    const { data: subP } = supabaseProvider.auth.onAuthStateChange((_event, session) => {
-      setProviderSession(session);
-      if (!session) setProviderUser(null);
-    });
-    const { data: subA } = supabaseAdmin.auth.onAuthStateChange((_event, session) => {
-      setAdminSession(session);
-      if (!session) setAdminUser(null);
-    });
-    return () => {
-      subC.subscription.unsubscribe();
-      subP.subscription.unsubscribe();
-      subA.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   /**
-   * Turn a recovery deep link into a usable recovery state.
+   * Turn a recovery deep link into a usable recovery state. Native only — on
+   * web, detectSessionInUrl consumes the URL and emits PASSWORD_RECOVERY.
    *
-   * Native only. On web, detectSessionInUrl is enabled for the consumer client,
-   * so supabase-js consumes the URL itself and emits PASSWORD_RECOVERY —
-   * nothing to do here. On native there is no window for it to read, so the
-   * tokens have to be exchanged by hand.
-   *
-   * Order matters: the recovery flag is set BEFORE the session is installed.
-   * setSession emits SIGNED_IN rather than PASSWORD_RECOVERY (that event only
-   * comes from the URL detection web uses), so without setting the flag first
-   * the navigator would see a token with no recovery flag and flash the main
+   * Order matters: the recovery flag is set BEFORE the session is installed,
+   * because setSession emits SIGNED_IN rather than PASSWORD_RECOVERY, and
+   * without the flag the navigator would route on role and flash the signed-in
    * app before the reset form appeared.
    */
   const handleRecoveryDeepLink = async (url) => {
@@ -117,11 +92,10 @@ export function AppStateProvider({ children }) {
 
     try {
       if (params.code) {
-        // Only reachable if flowType is switched to pkce; harmless otherwise.
-        const { error } = await supabaseConsumer.auth.exchangeCodeForSession(params.code);
+        const { error } = await supabaseAuth.auth.exchangeCodeForSession(params.code);
         if (error) throw error;
       } else if (params.access_token && params.refresh_token) {
-        const { error } = await supabaseConsumer.auth.setSession({
+        const { error } = await supabaseAuth.auth.setSession({
           access_token: params.access_token,
           refresh_token: params.refresh_token,
         });
@@ -137,15 +111,12 @@ export function AppStateProvider({ children }) {
 
   useEffect(() => {
     if (Platform.OS === "web") return undefined;
-
     let cancelled = false;
-    // The link may have launched the app cold...
     Linking.getInitialURL()
       .then((url) => {
         if (!cancelled) return handleRecoveryDeepLink(url);
       })
       .catch(() => {});
-    // ...or arrived while it was already open.
     const sub = Linking.addEventListener("url", ({ url }) => handleRecoveryDeepLink(url));
     return () => {
       cancelled = true;
@@ -153,157 +124,148 @@ export function AppStateProvider({ children }) {
     };
   }, []);
 
-  const consumerToken = consumerSession?.access_token || null;
-  const providerToken = providerSession?.access_token || null;
-  const adminToken = adminSession?.access_token || null;
+  const token = session?.access_token || null;
+  const role = user?.role || null;
 
-  const consumerLogin = async (email, password) => {
-    const { data, error } = await supabaseConsumer.auth.signInWithPassword({ email, password });
+  // The rest of the app still asks for "the provider token" or "the admin
+  // user". Those now derive from the single session, gated on the profile's
+  // role, so every portal and admin screen keeps working untouched — and a
+  // consumer's token is never handed to a portal call, which the backend would
+  // reject anyway (requireAuth checks the role on the token).
+  const consumerToken = role === "consumer" ? token : null;
+  const providerToken = role === "provider" ? token : null;
+  const adminToken = role === "platform_admin" ? token : null;
+  const consumerUser = role === "consumer" ? user : null;
+  const providerUser = role === "provider" ? user : null;
+  const adminUser = role === "platform_admin" ? user : null;
+
+  /**
+   * The single sign-in path for every role.
+   *
+   * Returns either the profile, or an MFA instruction for the caller to render:
+   *   { mfaRequired: true, factorId }      — a factor exists, needs a code
+   *   { mfaEnrollmentRequired: true }      — role demands a factor, none set up
+   *
+   * The MFA check is role-agnostic on purpose: it fires for any account whose
+   * assurance level needs raising, so enrolling a factor on a platform-admin
+   * account starts challenging it without further changes here.
+   */
+  const login = async (email, password) => {
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
-    const profile = await fetchProfile(supabaseConsumer, data.user.id);
-    setConsumerUser(profile);
+
+    const { data: aal } = await supabaseAuth.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal?.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+      const { data: factors } = await supabaseAuth.auth.mfa.listFactors();
+      return { mfaRequired: true, factorId: factors?.totp?.[0]?.id || null };
+    }
+
+    const profile = await fetchProfile(supabaseAuth, data.user.id);
+
+    if (profile?.role === "provider" && MFA_REQUIRED_PROVIDER_ROLES.includes(profile.providerRole)) {
+      const { data: factors } = await supabaseAuth.auth.mfa.listFactors();
+      if (!factors?.totp?.length) return { mfaEnrollmentRequired: true };
+    }
+
+    setUser(profile);
     return profile;
   };
 
-  const consumerSignup = async (name, email, password) => {
-    const { data, error } = await supabaseConsumer.auth.signUp({ email, password, options: { data: { name } } });
+  /**
+   * Sign up, declaring an account type.
+   *
+   * accountType only ever reaches the database as a request: handle_new_user()
+   * whitelists it to consumer/provider and ignores anything else, so a tampered
+   * client cannot mint a platform admin here.
+   */
+  const signup = async (name, email, password, accountType) => {
+    const { data, error } = await supabaseAuth.auth.signUp({
+      email,
+      password,
+      options: { data: { name, account_type: accountType } },
+    });
     if (error) throw new Error(error.message);
+
     // The profile row is created by a database trigger, which can lag the
     // signUp response by a moment — retry once before giving up.
-    let profile = await fetchProfile(supabaseConsumer, data.user.id);
+    let profile = await fetchProfile(supabaseAuth, data.user.id);
     if (!profile) {
       await new Promise((r) => setTimeout(r, 500));
-      profile = await fetchProfile(supabaseConsumer, data.user.id);
+      profile = await fetchProfile(supabaseAuth, data.user.id);
     }
-    setConsumerUser(profile);
+    setUser(profile);
     return profile;
   };
 
-  const consumerGoogleAuth = async () => {
-    const { error } = await supabaseConsumer.auth.signInWithOAuth({
+  const verifyMfa = async (factorId, code) => {
+    const { data: challenge, error: challengeError } = await supabaseAuth.auth.mfa.challenge({ factorId });
+    if (challengeError) throw new Error(challengeError.message);
+    const { data, error } = await supabaseAuth.auth.mfa.verify({ factorId, challengeId: challenge.id, code });
+    if (error) throw new Error(error.message);
+    const profile = await fetchProfile(supabaseAuth, data.user.id);
+    setUser(profile);
+    return profile;
+  };
+
+  const enrollMfa = async () => {
+    const { data, error } = await supabaseAuth.auth.mfa.enroll({ factorType: "totp" });
+    if (error) throw new Error(error.message);
+    return { factorId: data.id, qrSvg: data.totp.qr_code, secret: data.totp.secret };
+  };
+
+  const completeMfaEnrollment = async () => {
+    const { data } = await supabaseAuth.auth.getUser();
+    const profile = data?.user ? await fetchProfile(supabaseAuth, data.user.id) : null;
+    setUser(profile);
+    return profile;
+  };
+
+  const googleAuth = async () => {
+    const { error } = await supabaseAuth.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
     });
     if (error) throw new Error(error.message);
-    // On web this navigates away to Google's consent screen; the session is
-    // picked up by onAuthStateChange after the redirect back.
   };
 
   /**
    * Step 1 of a password reset: email the user a recovery link.
    *
-   * Deliberately resolves the same way whether or not an account exists for the
-   * address. Supabase does not distinguish either, and surfacing the difference
-   * would turn this form into an account-enumeration oracle — anyone could
-   * discover which of their contacts had used the service, which for a funeral
-   * price comparison site is unusually sensitive. The caller shows a neutral
-   * "if an account exists, check your email" message.
+   * Resolves the same way whether or not an account exists. Supabase does not
+   * distinguish either, and surfacing the difference would turn this form into
+   * an account-enumeration oracle — for a funeral price comparison site,
+   * confirming someone has an account is unusually sensitive.
    */
-  const consumerRequestPasswordReset = async (email) => {
-    const { error } = await supabaseConsumer.auth.resetPasswordForEmail(email, {
-      // Where the emailed link lands: the page origin on web, the app's own
-      // glp:// scheme on native. Both must be listed under Authentication >
-      // URL Configuration > Redirect URLs in the Supabase dashboard, or the
-      // link falls back to the project's Site URL and the reset silently
-      // fails to reach this app.
+  const requestPasswordReset = async (email) => {
+    const { error } = await supabaseAuth.auth.resetPasswordForEmail(email, {
       redirectTo: buildPasswordResetRedirectUrl(),
     });
     if (error) throw new Error(error.message);
   };
 
-  /**
-   * Step 2: set the new password, using the session the recovery link created.
-   */
-  const consumerCompletePasswordReset = async (newPassword) => {
-    const { data, error } = await supabaseConsumer.auth.updateUser({ password: newPassword });
+  const completePasswordReset = async (newPassword) => {
+    const { data, error } = await supabaseAuth.auth.updateUser({ password: newPassword });
     if (error) throw new Error(error.message);
     setPasswordRecovery(false);
-    const profile = await fetchProfile(supabaseConsumer, data.user.id);
-    setConsumerUser(profile);
+    const profile = await fetchProfile(supabaseAuth, data.user.id);
+    setUser(profile);
     return profile;
-  };
-
-  /**
-   * Abandon a reset. The recovery link already signed them in, so leaving the
-   * form without signing out would silently grant access on an unchanged
-   * password — sign out so they land back on the gate.
-   */
-  const consumerCancelPasswordReset = async () => {
-    setPasswordRecovery(false);
-    setRecoveryError(null);
-    await supabaseConsumer.auth.signOut();
-    setConsumerUser(null);
   };
 
   const clearRecoveryError = () => setRecoveryError(null);
 
-  const consumerLogout = async () => {
+  const logout = async () => {
     setPasswordRecovery(false);
     setRecoveryError(null);
-    await supabaseConsumer.auth.signOut();
-    setConsumerUser(null);
+    await supabaseAuth.auth.signOut();
+    setUser(null);
   };
 
-  const providerLogin = async (email, password) => {
-    const { data, error } = await supabaseProvider.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-
-    const { data: aal } = await supabaseProvider.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
-      const { data: factors } = await supabaseProvider.auth.mfa.listFactors();
-      const factor = factors?.totp?.[0];
-      return { mfaRequired: true, factorId: factor?.id || null };
-    }
-
-    const profile = await fetchProfile(supabaseProvider, data.user.id);
-    const needsEnrollment = profile && ["owner", "administrator"].includes(profile.providerRole);
-    if (needsEnrollment) {
-      const { data: factors } = await supabaseProvider.auth.mfa.listFactors();
-      if (!factors?.totp?.length) return { mfaEnrollmentRequired: true };
-    }
-
-    setProviderUser(profile);
-    return profile;
-  };
-
-  const providerVerifyMfa = async (factorId, code) => {
-    const { data: challenge, error: challengeError } = await supabaseProvider.auth.mfa.challenge({ factorId });
-    if (challengeError) throw new Error(challengeError.message);
-    const { data, error } = await supabaseProvider.auth.mfa.verify({ factorId, challengeId: challenge.id, code });
-    if (error) throw new Error(error.message);
-    const profile = await fetchProfile(supabaseProvider, data.user.id);
-    setProviderUser(profile);
-    return profile;
-  };
-
-  const providerCompleteMfaEnrollment = async () => {
-    const { data } = await supabaseProvider.auth.getUser();
-    const profile = data?.user ? await fetchProfile(supabaseProvider, data.user.id) : null;
-    setProviderUser(profile);
-    return profile;
-  };
-
-  const providerLogout = async () => {
-    await supabaseProvider.auth.signOut();
-    setProviderUser(null);
-  };
-
-  const adminLogin = async (email, password) => {
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    const profile = await fetchProfile(supabaseAdmin, data.user.id);
-    if (profile?.role !== "platform_admin") {
-      await supabaseAdmin.auth.signOut();
-      throw new Error("This account is not a platform admin.");
-    }
-    setAdminUser(profile);
-    return profile;
-  };
-
-  const adminLogout = async () => {
-    await supabaseAdmin.auth.signOut();
-    setAdminUser(null);
-  };
+  /**
+   * Abandon a reset. The recovery link already signed them in, so leaving the
+   * form without signing out would grant access on an unchanged password.
+   */
+  const cancelPasswordReset = logout;
 
   const addToCompare = (offeringId) => {
     setCompareTray((prev) => {
@@ -330,33 +292,50 @@ export function AppStateProvider({ children }) {
       filters,
       setFilters,
       clearFilters,
-      consumerToken,
-      consumerUser,
+
+      // Unified auth
+      session,
+      user,
+      role,
       authLoading,
-      consumerLogin,
-      consumerSignup,
-      consumerGoogleAuth,
-      consumerLogout,
+      login,
+      signup,
+      logout,
+      googleAuth,
+      verifyMfa,
+      enrollMfa,
+      completeMfaEnrollment,
+
+      // Password reset
       passwordRecovery,
       recoveryError,
       clearRecoveryError,
-      consumerRequestPasswordReset,
-      consumerCompletePasswordReset,
-      consumerCancelPasswordReset,
+      requestPasswordReset,
+      completePasswordReset,
+      cancelPasswordReset,
+
+      // Role-scoped views of the single session, so existing portal/admin and
+      // consumer screens keep working without changes.
+      consumerToken,
+      consumerUser,
       providerToken,
       providerUser,
-      providerLogin,
-      providerVerifyMfa,
-      providerCompleteMfaEnrollment,
-      providerLogout,
       adminToken,
       adminUser,
-      adminLogin,
-      adminLogout,
+
+      // Retained aliases: several screens call these directly.
+      consumerLogout: logout,
+      providerLogout: logout,
+      adminLogout: logout,
+      consumerRequestPasswordReset: requestPasswordReset,
+      consumerCompletePasswordReset: completePasswordReset,
+      consumerCancelPasswordReset: cancelPasswordReset,
+      consumerGoogleAuth: googleAuth,
+
       toast,
       showToast,
     }),
-    [location, needType, compareTray, filters, consumerToken, consumerUser, authLoading, passwordRecovery, recoveryError, providerToken, providerUser, adminToken, adminUser, toast]
+    [location, needType, compareTray, filters, session, user, role, authLoading, passwordRecovery, recoveryError, toast]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

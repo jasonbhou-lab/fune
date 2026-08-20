@@ -1,44 +1,55 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { TextField, PrimaryButton, SecondaryButton, Banner } from "../../components/ui";
+import { SvgXml } from "react-native-svg";
+import { TextField, PrimaryButton, Banner } from "../../components/ui";
 import GoogleSignInButton from "../../components/GoogleSignInButton";
-import { useAppState } from "../../context/AppState";
+import { useAppState, SELF_SERVICE_ACCOUNT_TYPES } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 import { useContentWidth } from "../../responsive";
 
 // Supabase enforces its own minimum (6 by default, configurable per project).
-// Requiring a little more here gives a clear message before the round trip
-// rather than surfacing a server-side rejection.
+// Requiring a little more here gives a clear message before the round trip.
 const MIN_PASSWORD_LENGTH = 8;
 
-// signup | login | forgot | reset
-//   forgot — asking for the address to email a recovery link to
-//   reset  — arrived from that email, choosing the new password
-export default function SignInScreen({ navigation }) {
+// The single entry point for every role.
+//
+// There used to be three: this gate for consumers, plus separate "Provider
+// portal sign in" and "Platform admin sign in" screens reached by buttons at
+// the bottom. Now one email/password pair serves all three, the account's role
+// comes from its profile, and RootNavigator sends them to the matching area.
+//
+// mode: signup | login | forgot | reset | mfa | mfaEnroll
+export default function SignInScreen() {
   const {
-    consumerLogin,
-    consumerSignup,
-    consumerGoogleAuth,
+    login,
+    signup,
+    googleAuth,
+    verifyMfa,
+    enrollMfa,
+    completeMfaEnrollment,
     passwordRecovery,
     recoveryError,
     clearRecoveryError,
-    consumerRequestPasswordReset,
-    consumerCompletePasswordReset,
-    consumerCancelPasswordReset,
+    requestPasswordReset,
+    completePasswordReset,
+    cancelPasswordReset,
   } = useAppState();
   const contentWidth = useContentWidth();
+
   const [mode, setMode] = useState("signup");
+  const [accountType, setAccountType] = useState(SELF_SERVICE_ACCOUNT_TYPES[0].id);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [factorId, setFactorId] = useState(null);
+  const [enrollment, setEnrollment] = useState(null); // { factorId, qrSvg, secret }
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // Opening the app from a reset email lands here with a recovery session
-  // already established, so jump straight to choosing a new password.
   useEffect(() => {
     if (passwordRecovery) {
       setMode("reset");
@@ -50,8 +61,7 @@ export default function SignInScreen({ navigation }) {
   }, [passwordRecovery]);
 
   // A link that came back expired or already-used can't be completed, so send
-  // the user to the request form with the reason visible rather than showing a
-  // password form that would fail on submit.
+  // the user to the request form with the reason visible.
   useEffect(() => {
     if (recoveryError) {
       setMode("forgot");
@@ -67,6 +77,7 @@ export default function SignInScreen({ navigation }) {
     setNotice(null);
     setPassword("");
     setConfirmPassword("");
+    setCode("");
   };
 
   const submit = async () => {
@@ -74,12 +85,52 @@ export default function SignInScreen({ navigation }) {
     setLoading(true);
     try {
       if (mode === "login") {
-        await consumerLogin(email.trim(), password);
+        const result = await login(email.trim(), password);
+        // Privileged accounts get a second step before the navigator lets them
+        // through. Anything else is already signed in and RootNavigator swaps
+        // this screen out for the area matching the profile's role.
+        if (result?.mfaRequired) {
+          setFactorId(result.factorId);
+          setCode("");
+          setMode("mfa");
+        } else if (result?.mfaEnrollmentRequired) {
+          const details = await enrollMfa();
+          setEnrollment(details);
+          setCode("");
+          setMode("mfaEnroll");
+        }
       } else {
-        await consumerSignup(name.trim(), email.trim(), password);
+        if (password.length < MIN_PASSWORD_LENGTH) {
+          setError(`Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.`);
+          return;
+        }
+        await signup(name.trim(), email.trim(), password, accountType);
       }
-      // No further navigation needed — once the token is set, the root
-      // navigator swaps this screen out for the main app automatically.
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitMfaCode = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await verifyMfa(factorId, code.trim());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitEnrollmentCode = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await verifyMfa(enrollment.factorId, code.trim());
+      await completeMfaEnrollment();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -97,10 +148,9 @@ export default function SignInScreen({ navigation }) {
     }
     setLoading(true);
     try {
-      await consumerRequestPasswordReset(address);
+      await requestPasswordReset(address);
       clearRecoveryError?.();
-      // Worded so it reveals nothing about whether the address has an account —
-      // see consumerRequestPasswordReset for why that matters here.
+      // Worded so it reveals nothing about whether the address has an account.
       setNotice(`If an account exists for ${address}, a reset link is on its way. The link expires after a short while.`);
     } catch (e) {
       setError(e.message);
@@ -121,9 +171,7 @@ export default function SignInScreen({ navigation }) {
     }
     setLoading(true);
     try {
-      await consumerCompletePasswordReset(password);
-      // consumerCompletePasswordReset clears the recovery flag, so the
-      // navigator now lets the (already signed-in) session through.
+      await completePasswordReset(password);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -131,21 +179,10 @@ export default function SignInScreen({ navigation }) {
     }
   };
 
-  const abandonReset = async () => {
-    setError(null);
-    try {
-      await consumerCancelPasswordReset();
-      setMode("login");
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-
   const handleGoogleSignIn = async () => {
     setError(null);
     try {
-      await consumerGoogleAuth();
-      // On web this navigates away to Google immediately; nothing more to do here.
+      await googleAuth();
     } catch (e) {
       setError(e.message);
     }
@@ -155,8 +192,14 @@ export default function SignInScreen({ navigation }) {
   const onGradientMuted = { color: "rgba(255,255,255,0.8)" };
   const fieldLabelColor = "rgba(255,255,255,0.85)";
 
-  const heading =
-    mode === "login" ? "Sign in" : mode === "forgot" ? "Reset your password" : mode === "reset" ? "Choose a new password" : "Create an account";
+  const heading = {
+    login: "Sign in",
+    signup: "Create an account",
+    forgot: "Reset your password",
+    reset: "Choose a new password",
+    mfa: "Verify it's you",
+    mfaEnroll: "Set up two-factor authentication",
+  }[mode];
 
   return (
     <LinearGradient colors={[colors.primary, colors.accent]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flex: 1 }}>
@@ -171,18 +214,50 @@ export default function SignInScreen({ navigation }) {
         {error ? <Banner tone="danger">{error}</Banner> : null}
         {notice ? <Banner tone="warn">{notice}</Banner> : null}
 
-        {mode === "forgot" ? (
+        {mode === "mfaEnroll" ? (
+          <>
+            <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.lg }]}>
+              This account's role requires it. Scan this code with an authenticator app (Google Authenticator, Authy,
+              1Password), then enter the 6-digit code it shows.
+            </Text>
+            <View style={{ alignItems: "center", marginBottom: spacing.lg }}>
+              <View style={{ backgroundColor: "#FFFFFF", padding: spacing.sm, borderRadius: 10 }}>
+                <SvgXml xml={enrollment.qrSvg} width={180} height={180} />
+              </View>
+              <Text style={[type.caption, onGradientMuted, { marginTop: spacing.sm, textAlign: "center" }]}>
+                Can't scan it? Enter this key manually: {enrollment.secret}
+              </Text>
+            </View>
+            <TextField label="6-digit code" value={code} onChangeText={setCode} keyboardType="number-pad" labelColor={fieldLabelColor} />
+            <PrimaryButton
+              title="Verify and finish setup"
+              onPress={submitEnrollmentCode}
+              loading={loading}
+              style={{ marginTop: spacing.sm, backgroundColor: colors.ink }}
+            />
+          </>
+        ) : mode === "mfa" ? (
+          <>
+            <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.md }]}>
+              Enter the 6-digit code from your authenticator app.
+            </Text>
+            <TextField label="Verification code" value={code} onChangeText={setCode} keyboardType="number-pad" labelColor={fieldLabelColor} />
+            <PrimaryButton
+              title="Verify"
+              onPress={submitMfaCode}
+              loading={loading}
+              style={{ marginTop: spacing.sm, backgroundColor: colors.ink }}
+            />
+            <Pressable onPress={() => go("login")} style={{ marginTop: spacing.lg }}>
+              <Text style={[onGradient, { textAlign: "center", fontWeight: "700" }]}>Back to sign in</Text>
+            </Pressable>
+          </>
+        ) : mode === "forgot" ? (
           <>
             <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.md }]}>
               Enter the email address on your account and we'll send you a link to set a new password.
             </Text>
-            <TextField
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              labelColor={fieldLabelColor}
-            />
+            <TextField label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" labelColor={fieldLabelColor} />
             <PrimaryButton
               title="Send reset link"
               onPress={sendResetLink}
@@ -198,13 +273,7 @@ export default function SignInScreen({ navigation }) {
             <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.md }]}>
               This link signed you in. Pick a new password to finish — it replaces the old one everywhere.
             </Text>
-            <TextField
-              label="New password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              labelColor={fieldLabelColor}
-            />
+            <TextField label="New password" value={password} onChangeText={setPassword} secureTextEntry labelColor={fieldLabelColor} />
             <TextField
               label="Confirm new password"
               value={confirmPassword}
@@ -218,22 +287,46 @@ export default function SignInScreen({ navigation }) {
               loading={loading}
               style={{ marginTop: spacing.sm, backgroundColor: colors.ink }}
             />
-            <Pressable onPress={abandonReset} style={{ marginTop: spacing.lg }}>
+            <Pressable onPress={cancelPasswordReset} style={{ marginTop: spacing.lg }}>
               <Text style={[onGradient, { textAlign: "center", fontWeight: "700" }]}>Cancel and sign out</Text>
             </Pressable>
           </>
         ) : (
           <>
             {mode === "signup" ? (
-              <TextField label="Name" value={name} onChangeText={setName} labelColor={fieldLabelColor} />
+              <>
+                {/* The account type decides where this person lands after every
+                    future sign-in. Only the two self-service roles appear;
+                    platform admins are provisioned directly, and the database
+                    whitelist ignores any other value that reaches it. */}
+                <Text style={[type.label, onGradientMuted, { marginBottom: spacing.sm }]}>Which describes you?</Text>
+                {SELF_SERVICE_ACCOUNT_TYPES.map((opt) => {
+                  const active = accountType === opt.id;
+                  return (
+                    <Pressable
+                      key={opt.id}
+                      onPress={() => setAccountType(opt.id)}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: active ? colors.primaryInk : "rgba(255,255,255,0.45)",
+                        backgroundColor: active ? "rgba(255,255,255,0.18)" : "transparent",
+                        borderRadius: 10,
+                        padding: 12,
+                        marginBottom: spacing.sm,
+                      }}
+                    >
+                      <Text style={[onGradient, { fontWeight: active ? "700" : "500" }]}>
+                        {active ? "● " : "○ "}
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <View style={{ marginBottom: spacing.md }} />
+                <TextField label="Name" value={name} onChangeText={setName} labelColor={fieldLabelColor} />
+              </>
             ) : null}
-            <TextField
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              labelColor={fieldLabelColor}
-            />
+            <TextField label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" labelColor={fieldLabelColor} />
             <TextField label="Password" value={password} onChangeText={setPassword} secureTextEntry labelColor={fieldLabelColor} />
             <PrimaryButton
               title={mode === "login" ? "Sign in" : "Create account"}
@@ -256,20 +349,11 @@ export default function SignInScreen({ navigation }) {
               <View style={{ flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.4)" }} />
             </View>
             <GoogleSignInButton onPress={handleGoogleSignIn} />
-          </>
-        )}
-
-        <View style={{ flex: 1 }} />
-
-        {/* Hidden mid-reset: sending someone to a different sign-in while they
-            hold an unfinished recovery session is a good way to lose them. */}
-        {mode === "reset" ? null : (
-          <>
-            <Text style={[type.label, onGradientMuted, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>For providers</Text>
-            <SecondaryButton title="Provider portal sign in" onPress={() => navigation.navigate("PortalLogin")} />
-
-            <Text style={[type.label, onGradientMuted, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>For platform staff</Text>
-            <SecondaryButton title="Platform admin sign in" onPress={() => navigation.navigate("AdminLogin")} />
+            {mode === "signup" ? (
+              <Text style={[type.caption, onGradientMuted, { marginTop: spacing.sm, textAlign: "center" }]}>
+                Google sign-up creates a consumer account.
+              </Text>
+            ) : null}
           </>
         )}
       </ScrollView>

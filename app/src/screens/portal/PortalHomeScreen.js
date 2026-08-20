@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useAppState } from "../../context/AppState";
 import { api } from "../../api";
-import { colors, spacing } from "../../theme";
+import { colors, spacing, type } from "../../theme";
 import { useContentWidth } from "../../responsive";
 import PortalDashboard from "./PortalDashboard";
 import PortalCatalog from "./PortalCatalog";
@@ -19,7 +19,7 @@ const NAV = [
 ];
 
 export default function PortalHomeScreen({ navigation }) {
-  const { providerUser, providerToken, providerLogout, consumerToken } = useAppState();
+  const { providerUser, providerToken, providerLogout } = useAppState();
   const contentWidth = useContentWidth();
   const [view, setView] = useState("dashboard");
   const [editingOffering, setEditingOffering] = useState(undefined); // undefined = list, null = new, object = edit
@@ -41,10 +41,9 @@ export default function PortalHomeScreen({ navigation }) {
     setSelectedLeadId(null);
   };
 
-  const signOut = async () => {
-    await providerLogout();
-    navigation.reset({ index: 0, routes: [{ name: consumerToken ? "Main" : "CreateAccount" }] });
-  };
+  // No explicit navigation: clearing the session makes RootNavigator fall back
+  // to the sign-in gate on its own.
+  const signOut = () => providerLogout();
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -66,8 +65,8 @@ export default function PortalHomeScreen({ navigation }) {
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.lg, flexWrap: "wrap", rowGap: spacing.sm }}>
-          <Text style={{ fontWeight: "700" }}>{providerUser?.orgName}</Text>
-          {NAV.map((n) => (
+          <Text style={{ fontWeight: "700" }}>{providerUser?.orgName || "Provider portal"}</Text>
+          {(providerUser?.orgId ? NAV : []).map((n) => (
             <Pressable key={n.id} onPress={() => goto(n.id)}>
               <Text style={{ color: view === n.id ? colors.primary : colors.muted, fontWeight: view === n.id ? "700" : "500" }}>
                 {n.label}
@@ -86,6 +85,23 @@ export default function PortalHomeScreen({ navigation }) {
           contentWidth,
         ]}
       >
+        {/* A provider who signed themselves up has no org_id until an admin
+            attaches them to one. Every portal query is scoped by organization,
+            so without this they would see an empty dashboard, an empty catalog
+            and no leads, with nothing explaining why. */}
+        {!providerUser?.orgId ? (
+          <>
+            <Text style={[type.h3, { marginBottom: spacing.sm }]}>Account pending setup</Text>
+            <Text style={{ color: colors.muted, lineHeight: 20 }}>
+              Your provider account isn't linked to an organization yet, so there are no locations, listings, or leads to
+              show. A platform administrator needs to connect it to your funeral home before the portal becomes useful.
+            </Text>
+            <Text style={[type.caption, { marginTop: spacing.md }]}>
+              Signed in as {providerUser?.email || "this account"}.
+            </Text>
+          </>
+        ) : (
+          <>
         {view === "dashboard" && <PortalDashboard token={providerToken} />}
 
         {view === "locations" && <PortalLocations token={providerToken} />}
@@ -121,6 +137,8 @@ export default function PortalHomeScreen({ navigation }) {
             onBack={() => setSelectedLeadId(null)}
             onChanged={() => setRefreshKey((k) => k + 1)}
           />
+        )}
+          </>
         )}
       </View>
     </View>

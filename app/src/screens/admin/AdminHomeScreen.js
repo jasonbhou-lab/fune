@@ -20,14 +20,13 @@ const NAV = [
 ];
 
 export default function AdminHomeScreen({ navigation }) {
-  const { adminUser, adminToken, adminLogout, consumerToken } = useAppState();
+  const { adminUser, adminToken, adminLogout } = useAppState();
   const contentWidth = useContentWidth();
   const [view, setView] = useState("orgs");
 
-  const signOut = async () => {
-    await adminLogout();
-    navigation.reset({ index: 0, routes: [{ name: consumerToken ? "Main" : "CreateAccount" }] });
-  };
+  // No explicit navigation: clearing the session makes RootNavigator fall back
+  // to the sign-in gate on its own.
+  const signOut = () => adminLogout();
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>

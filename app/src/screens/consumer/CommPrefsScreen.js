@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { Screen } from "../../components/ui";
-import { supabaseConsumer } from "../../supabaseClient";
+import { supabaseAuth } from "../../supabaseClient";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
@@ -51,7 +51,7 @@ export default function CommPrefsScreen() {
   const update = async (key, value) => {
     const next = { ...prefs, [key]: value };
     setPrefs(next);
-    const { error } = await supabaseConsumer.from("profiles").update({ [COLUMN_MAP[key]]: value }).eq("id", consumerUser.id);
+    const { error } = await supabaseAuth.from("profiles").update({ [COLUMN_MAP[key]]: value }).eq("id", consumerUser.id);
     if (error) showToast(`Couldn't save: ${error.message}`, "danger");
   };
 

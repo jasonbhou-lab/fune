@@ -95,18 +95,35 @@ create table profiles (
   created_at timestamptz not null default now()
 );
 
--- Auto-create a default consumer profile for any new Supabase Auth user
--- (covers both email/password signup and Google OAuth signup, which never
--- goes through our own signup code). Provider/platform-admin accounts get
--- their real role set explicitly by the migration script or admin tooling,
--- which overwrites this default via upsert.
+-- Create the profile for any new Supabase Auth user (covers email/password
+-- signup and Google OAuth signup, which never goes through our own code).
+--
+-- The signup form asks for an account type so that one login form can route
+-- people to the right area afterwards, and it arrives here as
+-- raw_user_meta_data.account_type. That metadata is supplied by whoever called
+-- signUp, so it is UNTRUSTED: only 'consumer' and 'provider' are honoured.
+--
+-- 'platform_admin' is deliberately unreachable through signup. Accepting it
+-- would let anyone hand themselves the admin back office — organization
+-- verification, listing takedown, the full audit log — from a dropdown on a
+-- public form. Platform admins are granted out of band (see the note below).
+-- Anything unrecognised falls back to 'consumer', so hostile or malformed
+-- values fail closed to the least-privileged role.
 create function public.handle_new_user()
 returns trigger as $$
+declare
+  requested text := new.raw_user_meta_data->>'account_type';
+  resolved  text;
 begin
+  resolved := case
+    when requested in ('consumer', 'provider') then requested
+    else 'consumer'
+  end;
+
   insert into public.profiles (id, role, name, email)
   values (
     new.id,
-    'consumer',
+    resolved,
     coalesce(new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     new.email
   )
@@ -114,6 +131,17 @@ begin
   return new;
 end;
 $$ language plpgsql security definer set search_path = public;
+
+-- Granting a platform admin, or attaching a self-registered provider to an
+-- organization, is a service_role operation and has no self-service path:
+--
+--   update public.profiles set role = 'platform_admin' where email = '...';
+--   update public.profiles set org_id = '<org uuid>', provider_role = 'owner'
+--     where email = '...';
+--
+-- A provider who signs themselves up has org_id null until someone does that,
+-- which is why the portal shows a "not linked to an organization yet" state
+-- rather than an empty dashboard.
 
 create trigger on_auth_user_created
   after insert on auth.users

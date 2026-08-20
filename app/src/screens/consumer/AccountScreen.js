@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
-import { Screen, SecondaryButton, Card } from "../../components/ui";
+import { Screen, Card } from "../../components/ui";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
@@ -26,13 +26,6 @@ export default function AccountScreen({ navigation }) {
         <Row label="Sign out" onPress={consumerLogout} />
       </Card>
 
-      <View style={{ flex: 1 }} />
-
-      <Text style={[type.label, { marginBottom: spacing.sm }]}>For providers</Text>
-      <SecondaryButton title="Provider portal sign in" onPress={() => navigation.navigate("PortalLogin")} />
-
-      <Text style={[type.label, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>For platform staff</Text>
-      <SecondaryButton title="Platform admin sign in" onPress={() => navigation.navigate("AdminLogin")} />
       </ScrollView>
     </Screen>
   );
