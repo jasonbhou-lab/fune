@@ -1,24 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "//": "Without this file Vercel found no framework at the repository root and served the root itself as static files. That published the entire repo: supabase/schema.sql, all of server/, all of app/src, and app/db.js were all fetchable over HTTPS. Building app/ and serving only app/dist means nothing but the compiled site is reachable.",
-
   "installCommand": "npm --prefix app ci",
   "buildCommand": "cd app && npm run build",
   "outputDirectory": "app/dist",
   "framework": null,
-
   "rewrites": [
     {
-      "//": "React Navigation drives real URLs once a linking config exists, but index.html is the only HTML file on disk. Without this, a refresh or a shared deep link 404s. Vercel serves files that exist before applying rewrites, so the bundle and assets are unaffected. /api is excluded deliberately: catching it here would hand API calls a page of HTML instead of an honest 404, and it is where a real backend or proxy would be mounted.",
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ],
-
   "headers": [
     {
-      "//": "app/public/.htaccess carries these for Apache, which Vercel ignores entirely — they have to be restated here or the deployed site ships with no security headers at all.",
       "source": "/(.*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
@@ -32,7 +25,6 @@
       ]
     },
     {
-      "//": "Bundle filenames are content-hashed, so they are immutable. index.html must not be cached or a deploy does not take effect.",
       "source": "/_expo/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
