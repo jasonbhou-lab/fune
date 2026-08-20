@@ -1,8 +1,8 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
-  'https://czelhizizienwnnopfou.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6ZWxoaXppemllbndubm9wZm91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjczMTcsImV4cCI6MjEwMjA0MzMxN30.I-gnYruLS6gkGO91ibBXvyOm8zRjXp_DOWaDIZkuFYM'
+  'https://jxgparaggtwsosmvutjf.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4Z3BhcmFnZ3R3c29zbXZ1dGpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNDk2NzYsImV4cCI6MjEwMjgyNTY3Nn0.YBT0R-XD5toXM89sXflVJGuKjhg8hAJNgcdxznNLYBw'
 );
 
 // Test the connection

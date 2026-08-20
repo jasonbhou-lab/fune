@@ -87,8 +87,8 @@ if (API_BASE.startsWith("http://") && !isLocalHost(API_BASE.replace(/^https?:\/\
 // Supabase project connection. Find these under Project Settings > API in
 // your Supabase dashboard. The anon key is safe to ship in client code (it's
 // designed for that) — never put the service_role key here.
-export const SUPABASE_URL = "https://czelhizizienwnnopfou.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6ZWxoaXppemllbndubm9wZm91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjczMTcsImV4cCI6MjEwMjA0MzMxN30.I-gnYruLS6gkGO91ibBXvyOm8zRjXp_DOWaDIZkuFYM";
+export const SUPABASE_URL = "https://jxgparaggtwsosmvutjf.supabase.co";
+export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4Z3BhcmFnZ3R3c29zbXZ1dGpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNDk2NzYsImV4cCI6MjEwMjgyNTY3Nn0.YBT0R-XD5toXM89sXflVJGuKjhg8hAJNgcdxznNLYBw";
 
 // Google Maps JavaScript API key, used only by the web build (MapView.web.js)
 // to render real Google Maps in a browser. Get this from Google Cloud
