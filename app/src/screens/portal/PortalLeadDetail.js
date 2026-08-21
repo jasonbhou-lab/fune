@@ -7,13 +7,13 @@ import { colors, spacing, type } from "../../theme";
 
 const STATUSES = ["new", "contacted", "appointment_scheduled", "quoted", "converted", "closed_lost", "do_not_contact"];
 
-export default function PortalLeadDetail({ token, leadId, onBack, onChanged }) {
+export default function PortalLeadDetail({ token, leadId, onBack, onChanged, actAsOrg}) {
   const { providerUser } = useAppState();
   const [lead, setLead] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const load = () => api.portalLead(token, leadId).then(setLead).catch((e) => setError(e.message));
+  const load = () => api.portalLead(token, leadId, actAsOrg).then(setLead).catch((e) => setError(e.message));
 
   useEffect(() => {
     load();
@@ -22,7 +22,7 @@ export default function PortalLeadDetail({ token, leadId, onBack, onChanged }) {
   const setStatus = async (status) => {
     setSaving(true);
     try {
-      await api.portalUpdateLead(token, leadId, { status, owner: lead.owner || providerUser.id });
+      await api.portalUpdateLead(token, leadId, { status, owner: lead.owner || providerUser?.id || null }, actAsOrg);
       await load();
       onChanged?.();
     } catch (e) {

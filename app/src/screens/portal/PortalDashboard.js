@@ -4,12 +4,12 @@ import { Card, Banner, SplitRow } from "../../components/ui";
 import { api } from "../../api";
 import { colors, spacing, type } from "../../theme";
 
-export default function PortalDashboard({ token }) {
+export default function PortalDashboard({ token, actAsOrg}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    api.portalDashboard(token).then(setData).catch((e) => setError(e.message));
+    api.portalDashboard(token, actAsOrg).then(setData).catch((e) => setError(e.message));
   }, [token]);
 
   if (error) return <Text style={{ color: colors.danger }}>{error}</Text>;

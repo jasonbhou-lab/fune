@@ -68,6 +68,136 @@ router.patch("/orgs/:id/verify", async (req, res) => {
 // registers an organization that isn't listed yet becomes its first owner.
 const PROVIDER_ROLES = ["owner", "administrator", "lead_manager"];
 
+const ASSIGNABLE_ROLES = ["consumer", "provider", "platform_admin"];
+
+const USER_COLUMNS = `
+  id, name, email, role, orgId:org_id, providerRole:provider_role,
+  rolePending:role_pending, orgClaimStatus:org_claim_status,
+  requestedOrgId:requested_org_id, requestedOrgName:requested_org_name, createdAt:created_at
+`;
+
+/**
+ * Every account on the platform.
+ *
+ * The one screen from which a platform admin can see who exists and fix a role
+ * or an organization by hand, rather than only through the claim queue. Capped
+ * and searchable rather than unbounded, for the same reason as every other admin
+ * list: this table grows with the platform.
+ */
+router.get("/users", async (req, res) => {
+  const q = asString(req.query.q, { field: "q", max: LIMITS.query, allowEmpty: true });
+  const role = asEnum(req.query.role, ASSIGNABLE_ROLES, { field: "role" });
+
+  let query = supabase.from("profiles").select(USER_COLUMNS).order("created_at", { ascending: false }).limit(MAX_ROWS);
+  if (role) query = query.eq("role", role);
+  if (q) {
+    const safe = q.replace(/([\\%_])/g, "\\$1");
+    query = query.or(`name.ilike.%${safe}%,email.ilike.%${safe}%`);
+  }
+
+  const { data: users, error } = await query;
+  if (error) return res.status(500).json({ error: "Couldn't load users." });
+
+  const orgIds = [...new Set((users || []).map((u) => u.orgId).filter(Boolean))];
+  let orgsById = new Map();
+  if (orgIds.length > 0) {
+    const { data: orgs } = await supabase.from("orgs").select("id, name, verified").in("id", orgIds);
+    orgsById = new Map((orgs || []).map((o) => [o.id, o]));
+  }
+
+  res.json((users || []).map((u) => ({ ...u, org: u.orgId ? orgsById.get(u.orgId) || null : null })));
+});
+
+/**
+ * Change an account's role, organization, or provider role.
+ *
+ * This is the deliberate back door that the rest of the system refuses to
+ * provide: role is not writable by the account itself at any privilege level
+ * (see the column grants on profiles), and claim_account_type() will not grant
+ * platform_admin to anyone. Both of those exist to stop self-promotion. An admin
+ * doing it explicitly, from an authenticated admin session, with an audit entry,
+ * is the intended path.
+ *
+ * Two invariants are enforced regardless of what is asked for: the platform
+ * cannot be left with no admins, and only a provider may belong to an
+ * organization.
+ */
+router.patch("/users/:id", async (req, res) => {
+  const { data: existing, error: findError } = await supabase
+    .from("profiles")
+    .select(USER_COLUMNS)
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (findError || !existing) return res.status(404).json({ error: "User not found." });
+
+  const role = asEnum(req.body?.role, ASSIGNABLE_ROLES, { field: "role" }) || existing.role;
+  const providerRoleGiven = Object.prototype.hasOwnProperty.call(req.body || {}, "providerRole");
+  const orgIdGiven = Object.prototype.hasOwnProperty.call(req.body || {}, "orgId");
+
+  const providerRole = providerRoleGiven
+    ? asEnum(req.body.providerRole, PROVIDER_ROLES, { field: "providerRole" })
+    : existing.providerRole;
+  const orgId = orgIdGiven ? asString(req.body.orgId, { field: "orgId", max: LIMITS.id }) : existing.orgId;
+
+  // Losing the last admin means losing the admin area, including this endpoint,
+  // with no way back in short of direct database access.
+  if (existing.role === "platform_admin" && role !== "platform_admin") {
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("role", "platform_admin");
+    if ((count || 0) <= 1) {
+      return res.status(409).json({ error: "This is the only platform admin. Promote someone else first." });
+    }
+  }
+
+  const patch = { role };
+
+  if (role === "provider") {
+    if (orgId) {
+      const { data: org } = await supabase.from("orgs").select("id").eq("id", orgId).maybeSingle();
+      if (!org) return res.status(404).json({ error: "Organization not found." });
+      patch.org_id = orgId;
+      patch.provider_role = providerRole || existing.providerRole || "lead_manager";
+    } else {
+      patch.org_id = null;
+      patch.provider_role = null;
+    }
+  } else {
+    // A consumer or a platform admin belongs to no organization. Clearing this
+    // matters: a stale org_id on a demoted account would still scope portal
+    // queries if the role were ever restored.
+    patch.org_id = null;
+    patch.provider_role = null;
+  }
+
+  // Attaching someone by hand answers whatever they had asked for, and a settled
+  // account should never be sent back to the role prompt.
+  patch.role_pending = false;
+  patch.org_claim_status = "none";
+  patch.requested_org_id = null;
+  patch.requested_org_name = null;
+
+  const { data: updated, error } = await supabase
+    .from("profiles")
+    .update(patch)
+    .eq("id", req.params.id)
+    .select(USER_COLUMNS)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't update the user." });
+  if (!updated) return res.status(404).json({ error: "User not found." });
+
+  await appendAudit({
+    actor: req.user.name,
+    action: "user_updated",
+    entity: req.params.id,
+    from: `${existing.role}${existing.orgId ? ` @ ${existing.orgId}` : ""}`,
+    to: `${updated.role}${updated.orgId ? ` @ ${updated.orgId}` : ""}`,
+  });
+
+  res.json(updated);
+});
+
 const CLAIM_COLUMNS =
   "id, name, email, requestedOrgId:requested_org_id, requestedOrgName:requested_org_name, status:org_claim_status, createdAt:created_at";
 

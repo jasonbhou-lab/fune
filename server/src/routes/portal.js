@@ -1,6 +1,6 @@
 import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
-import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, REVIEW_COLUMNS, reviewStatsFor } from "../db.js";
+import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, REVIEW_COLUMNS, reviewStatsFor, appendAudit } from "../db.js";
 import {
   priceDisplay,
   disclosureCompleteness,
@@ -9,7 +9,7 @@ import {
   serializeReview,
   ATTRIBUTE_KEYS,
 } from "../serialize.js";
-import { requireAuth } from "../auth.js";
+import { requirePortalAccess } from "../auth.js";
 import { offeringsToCsv, parseCsv } from "../csv.js";
 import { bulkLimiter } from "../rateLimit.js";
 import { asString, asEnum, asNumber, asStringArray, asDate, LIMITS } from "../validate.js";
@@ -80,7 +80,27 @@ async function assertOwnsMember(orgId, profileId) {
   return Boolean(data);
 }
 
-router.use(requireAuth("provider"));
+router.use(requirePortalAccess());
+
+// A platform admin working inside someone else's portal is doing something the
+// organization did not do. Without this the audit log would attribute a price
+// change or a lead edit to the provider, which is exactly the record you would
+// want when a provider disputes one.
+//
+// Logged before the handler runs, so it records the attempt rather than only the
+// successes — the more useful property for an access trail.
+router.use(async (req, _res, next) => {
+  if (req.method !== "GET" && req.user?.actingAsOrg) {
+    await appendAudit({
+      actor: `${req.user.name} (platform admin)`,
+      action: `admin_portal_${req.method.toLowerCase()}`,
+      entity: req.user.actingAsOrg.id,
+      from: req.user.actingAsOrg.name,
+      to: (req.originalUrl || req.url || "").split("?")[0],
+    });
+  }
+  next();
+});
 
 const MAX_PORTAL_REVIEWS = 200;
 

@@ -16,7 +16,7 @@ const MAX_RESPONSE = 4000;
  * they believe are fake go through the same report route as everyone else's, so
  * a platform admin makes the call rather than the subject of the review.
  */
-export default function PortalReviews({ token }) {
+export default function PortalReviews({ token, actAsOrg}) {
   const { showToast } = useAppState();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -48,7 +48,7 @@ export default function PortalReviews({ token }) {
     }
     setSavingId(review.id);
     try {
-      await api.portalRespondToReview(token, review.id, draft.trim());
+      await api.portalRespondToReview(token, review.id, draft.trim(), actAsOrg);
       showToast("Your reply is public.");
       setEditingId(null);
       setDraft("");
@@ -63,7 +63,7 @@ export default function PortalReviews({ token }) {
   const removeReply = async (review) => {
     setSavingId(review.id);
     try {
-      await api.portalDeleteReviewResponse(token, review.id);
+      await api.portalDeleteReviewResponse(token, review.id, actAsOrg);
       showToast("Reply removed.");
       load();
     } catch (e) {

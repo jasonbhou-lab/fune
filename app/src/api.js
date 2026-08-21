@@ -7,7 +7,7 @@ class ApiError extends Error {
   }
 }
 
-async function requestText(path, { method = "GET", body, token } = {}) {
+async function requestText(path, { method = "GET", body, token, actAsOrg } = {}) {
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -15,6 +15,9 @@ async function requestText(path, { method = "GET", body, token } = {}) {
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // Set only when a platform admin is working inside a provider's portal.
+        // The server ignores it for anyone who is not an admin.
+        ...(actAsOrg ? { "X-Act-As-Org": actAsOrg } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -34,7 +37,7 @@ async function requestText(path, { method = "GET", body, token } = {}) {
   return text;
 }
 
-async function request(path, { method = "GET", body, token } = {}) {
+async function request(path, { method = "GET", body, token, actAsOrg } = {}) {
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -42,6 +45,9 @@ async function request(path, { method = "GET", body, token } = {}) {
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // Set only when a platform admin is working inside a provider's portal.
+        // The server ignores it for anyone who is not an admin.
+        ...(actAsOrg ? { "X-Act-As-Org": actAsOrg } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -79,17 +85,23 @@ export const api = {
   duplicateComparison: (token, id) => request(`/saved/comparisons/${id}/duplicate`, { method: "POST", token }),
 
   // Provider portal
-  portalDashboard: (token) => request("/portal/dashboard", { token }),
-  portalLocations: (token) => request("/portal/locations", { token }),
-  portalUpdateLocation: (token, id, payload) => request(`/portal/locations/${id}`, { method: "PATCH", body: payload, token }),
-  portalCatalog: (token) => request("/portal/catalog", { token }),
-  portalCreateOffering: (token, payload) => request("/portal/catalog", { method: "POST", body: payload, token }),
-  portalUpdateOffering: (token, id, payload) => request(`/portal/catalog/${id}`, { method: "PUT", body: payload, token }),
-  portalExportCatalog: (token) => requestText("/portal/catalog/export", { token }),
-  portalImportCatalog: (token, csv) => request("/portal/catalog/import", { method: "POST", body: { csv }, token }),
-  portalLeads: (token, params) => request(`/portal/leads${params ? `?${new URLSearchParams(params).toString()}` : ""}`, { token }),
-  portalLead: (token, id) => request(`/portal/leads/${id}`, { token }),
-  portalUpdateLead: (token, id, payload) => request(`/portal/leads/${id}`, { method: "PATCH", body: payload, token }),
+  portalDashboard: (token, actAsOrg) => request("/portal/dashboard", { token, actAsOrg }),
+  portalLocations: (token, actAsOrg) => request("/portal/locations", { token, actAsOrg }),
+  portalUpdateLocation: (token, id, payload, actAsOrg) =>
+    request(`/portal/locations/${id}`, { method: "PATCH", body: payload, token, actAsOrg }),
+  portalCatalog: (token, actAsOrg) => request("/portal/catalog", { token, actAsOrg }),
+  portalCreateOffering: (token, payload, actAsOrg) =>
+    request("/portal/catalog", { method: "POST", body: payload, token, actAsOrg }),
+  portalUpdateOffering: (token, id, payload, actAsOrg) =>
+    request(`/portal/catalog/${id}`, { method: "PUT", body: payload, token, actAsOrg }),
+  portalExportCatalog: (token, actAsOrg) => requestText("/portal/catalog/export", { token, actAsOrg }),
+  portalImportCatalog: (token, csv, actAsOrg) =>
+    request("/portal/catalog/import", { method: "POST", body: { csv }, token, actAsOrg }),
+  portalLeads: (token, params, actAsOrg) =>
+    request(`/portal/leads${params ? `?${new URLSearchParams(params).toString()}` : ""}`, { token, actAsOrg }),
+  portalLead: (token, id, actAsOrg) => request(`/portal/leads/${id}`, { token, actAsOrg }),
+  portalUpdateLead: (token, id, payload, actAsOrg) =>
+    request(`/portal/leads/${id}`, { method: "PATCH", body: payload, token, actAsOrg }),
 
   // Reviews — public to read, consumer-authenticated to write.
   orgReviews: (orgId, { sort, rating, page, pageSize } = {}, token) => {
@@ -107,9 +119,11 @@ export const api = {
   reportReview: (reviewId, payload, token) => request(`/reviews/${reviewId}/report`, { method: "POST", body: payload, token }),
 
   // Provider replies to its own reviews.
-  portalReviews: (token) => request("/portal/reviews", { token }),
-  portalRespondToReview: (token, id, body) => request(`/portal/reviews/${id}/response`, { method: "PUT", body: { body }, token }),
-  portalDeleteReviewResponse: (token, id) => request(`/portal/reviews/${id}/response`, { method: "DELETE", token }),
+  portalReviews: (token, actAsOrg) => request("/portal/reviews", { token, actAsOrg }),
+  portalRespondToReview: (token, id, body, actAsOrg) =>
+    request(`/portal/reviews/${id}/response`, { method: "PUT", body: { body }, token, actAsOrg }),
+  portalDeleteReviewResponse: (token, id, actAsOrg) =>
+    request(`/portal/reviews/${id}/response`, { method: "DELETE", token, actAsOrg }),
 
   // Consumer pricing report
   submitReport: (payload, token) => request("/reports", { method: "POST", body: payload, token }),
@@ -135,6 +149,14 @@ export const api = {
   adminApproveOrgClaim: (token, profileId, providerRole) =>
     request(`/admin/org-claims/${profileId}/approve`, { method: "POST", body: { providerRole }, token }),
   adminRejectOrgClaim: (token, profileId) => request(`/admin/org-claims/${profileId}/reject`, { method: "POST", token }),
+  adminUsers: (token, { q, role } = {}) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (role) params.set("role", role);
+    const qs = params.toString();
+    return request(`/admin/users${qs ? `?${qs}` : ""}`, { token });
+  },
+  adminUpdateUser: (token, id, payload) => request(`/admin/users/${id}`, { method: "PATCH", body: payload, token }),
   adminAuditLog: (token) => request("/admin/audit-log", { token }),
   adminFunnel: (token) => request("/admin/analytics/funnel", { token }),
   adminTopCategories: (token) => request("/admin/analytics/top-categories", { token }),

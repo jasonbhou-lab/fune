@@ -83,7 +83,15 @@ export function AppStateProvider({ children }) {
    */
   const resolveProfile = async (userId) => {
     const profile = await loadProfile(userId);
-    if (!profile?.rolePending) return profile;
+    if (!profile?.rolePending) {
+      // This account has already chosen — including any created before the role
+      // prompt existed, which land here as whatever handle_new_user() guessed.
+      // Their answers are not applied, by design, but a leftover intent must not
+      // sit in storage waiting to be spent on some later, unrelated signup in
+      // this browser.
+      await clearSignupIntent();
+      return profile;
+    }
 
     const intent = await takeSignupIntent();
     if (!intent) return profile;

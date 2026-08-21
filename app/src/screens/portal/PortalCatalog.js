@@ -5,7 +5,7 @@ import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
-export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey }) {
+export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey, actAsOrg}) {
   const { showToast } = useAppState();
   const [items, setItems] = useState(null);
   const [error, setError] = useState(null);
@@ -20,7 +20,7 @@ export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey
   const [importResult, setImportResult] = useState(null);
 
   const load = useCallback(() => {
-    api.portalCatalog(token).then(setItems).catch((e) => setError(e.message));
+    api.portalCatalog(token, actAsOrg).then(setItems).catch((e) => setError(e.message));
   }, [token]);
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey
   const runExport = async () => {
     setExporting(true);
     try {
-      const csv = await api.portalExportCatalog(token);
+      const csv = await api.portalExportCatalog(token, actAsOrg);
       setExportText(csv);
       setExportOpen(true);
       if (Platform.OS === "web" && typeof document !== "undefined") {
@@ -57,7 +57,7 @@ export default function PortalCatalog({ token, onSelect, onCreateNew, refreshKey
     setImporting(true);
     setImportResult(null);
     try {
-      const result = await api.portalImportCatalog(token, importText);
+      const result = await api.portalImportCatalog(token, importText, actAsOrg);
       setImportResult(result);
       showToast(`Imported: ${result.created} created, ${result.updated} updated${result.errors.length ? `, ${result.errors.length} row error(s)` : ""}.`);
       load();

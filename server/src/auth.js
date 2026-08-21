@@ -47,33 +47,103 @@ async function resolveUser(token) {
   };
 }
 
+function bearerToken(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+}
+
+/**
+ * Authenticate the caller, or send the failure response and return null.
+ *
+ * Fails closed on *any* non-null error rather than enumerating the ones we
+ * expect. An earlier version only handled "invalid" and "no_profile", so a new
+ * error string added to resolveUser later would have fallen through to the role
+ * check with user === null and thrown a TypeError — reaching the error handler
+ * instead of denying access explicitly.
+ */
+async function authenticate(req, res) {
+  const token = bearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Missing authorization token." });
+    return null;
+  }
+  if (!supabaseConfigured) {
+    res.status(501).json({ error: "Supabase is not configured on this server yet." });
+    return null;
+  }
+
+  const { user, mfaSatisfied, error } = await resolveUser(token);
+  if (error || !user) {
+    res.status(error === "unconfigured" ? 501 : 401).json({ error: "Invalid or expired token." });
+    return null;
+  }
+  if (!mfaSatisfied) {
+    res
+      .status(403)
+      .json({ error: "This account requires multi-factor verification before continuing.", mfaRequired: true });
+    return null;
+  }
+  return user;
+}
+
 export function requireAuth(role) {
   return async (req, res, next) => {
-    const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
-    if (!token) return res.status(401).json({ error: "Missing authorization token." });
-    if (!supabaseConfigured) return res.status(501).json({ error: "Supabase is not configured on this server yet." });
-
-    const { user, mfaSatisfied, error } = await resolveUser(token);
-
-    // Fail closed on *any* non-null error rather than enumerating the ones we
-    // expect. The previous version only handled "invalid" and "no_profile",
-    // so a new error string added to resolveUser later would have fallen
-    // through to the role check with user === null and thrown a TypeError —
-    // reaching the error handler instead of denying access explicitly.
-    if (error || !user) {
-      const status = error === "unconfigured" ? 501 : 401;
-      return res.status(status).json({ error: "Invalid or expired token." });
-    }
+    const user = await authenticate(req, res);
+    if (!user) return undefined;
     if (role && user.role !== role) return res.status(403).json({ error: "Not authorized for this resource." });
-    if (!mfaSatisfied) {
-      return res
-        .status(403)
-        .json({ error: "This account requires multi-factor verification before continuing.", mfaRequired: true });
-    }
-
     req.user = user;
     next();
+  };
+}
+
+// The organization a platform admin is currently working inside. A header rather
+// than a query parameter so it cannot end up in a URL, a log line, or a Referer.
+export const ACT_AS_ORG_HEADER = "x-act-as-org";
+
+/**
+ * Portal access for a provider on their own organization, or a platform admin on
+ * a named one.
+ *
+ * Every portal route scopes its queries to req.user.orgId and never to an id
+ * taken from the request body — that is what stops one provider reading
+ * another's leads. Rather than duplicate fourteen endpoints so admins can reach
+ * the same data, this sets that one field, and the routes need no knowledge of
+ * it at all.
+ *
+ * The privilege is narrow by construction: only a platform_admin may name an
+ * organization, the name is ignored entirely for providers (so a provider
+ * sending the header still only ever sees their own), and the organization has
+ * to exist. What it deliberately does grant is real: an admin working inside a
+ * provider's portal can read that organization's leads, which carry bereaved
+ * families' names, phone numbers and circumstances. Hence actingAsOrg below,
+ * which the portal router uses to record every write.
+ */
+export function requirePortalAccess() {
+  return async (req, res, next) => {
+    const user = await authenticate(req, res);
+    if (!user) return undefined;
+
+    if (user.role === "provider") {
+      req.user = user;
+      return next();
+    }
+    if (user.role !== "platform_admin") {
+      return res.status(403).json({ error: "Not authorized for this resource." });
+    }
+
+    const raw = req.headers[ACT_AS_ORG_HEADER];
+    const orgId = typeof raw === "string" && raw.length <= 64 ? raw.trim() : null;
+    if (!orgId) {
+      // Distinguishable from a plain 400 so the admin UI can prompt for a
+      // choice rather than showing a validation error.
+      return res.status(400).json({ error: "Choose an organization to work on first.", chooseOrganization: true });
+    }
+
+    const { data: org, error } = await supabase.from("orgs").select("id, name").eq("id", orgId).maybeSingle();
+    if (error || !org) return res.status(404).json({ error: "Organization not found." });
+
+    req.user = { ...user, orgId: org.id, actingAsOrg: org };
+    return next();
   };
 }
 

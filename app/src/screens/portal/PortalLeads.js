@@ -32,7 +32,7 @@ const NEED_OPTIONS = [
   { id: "research", label: "Research" },
 ];
 
-export default function PortalLeads({ token, onSelect, refreshKey }) {
+export default function PortalLeads({ token, onSelect, refreshKey, actAsOrg}) {
   const [leads, setLeads] = useState(null);
   const [error, setError] = useState(null);
   const [status, setStatus] = useState(null);
@@ -42,7 +42,7 @@ export default function PortalLeads({ token, onSelect, refreshKey }) {
     const params = {};
     if (status) params.status = status;
     if (needType) params.needType = needType;
-    api.portalLeads(token, Object.keys(params).length ? params : undefined).then(setLeads).catch((e) => setError(e.message));
+    api.portalLeads(token, Object.keys(params).length ? params : undefined, actAsOrg).then(setLeads).catch((e) => setError(e.message));
   }, [token, status, needType]);
 
   useEffect(() => {

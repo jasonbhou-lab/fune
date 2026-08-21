@@ -33,13 +33,13 @@ function Toggle({ value, onChange }) {
   );
 }
 
-export default function PortalLocations({ token }) {
+export default function PortalLocations({ token, actAsOrg}) {
   const [locations, setLocations] = useState(null);
   const [error, setError] = useState(null);
   const [savingKey, setSavingKey] = useState(null);
 
   useEffect(() => {
-    api.portalLocations(token).then(setLocations).catch((e) => setError(e.message));
+    api.portalLocations(token, actAsOrg).then(setLocations).catch((e) => setError(e.message));
   }, [token]);
 
   const toggle = async (location, key) => {
@@ -47,7 +47,7 @@ export default function PortalLocations({ token }) {
     setSavingKey(`${location.id}:${key}`);
     setLocations((prev) => prev.map((l) => (l.id === location.id ? { ...l, [key]: nextValue } : l)));
     try {
-      await api.portalUpdateLocation(token, location.id, { [key]: nextValue });
+      await api.portalUpdateLocation(token, location.id, { [key]: nextValue }, actAsOrg);
     } catch (e) {
       // revert on failure
       setLocations((prev) => prev.map((l) => (l.id === location.id ? { ...l, [key]: !nextValue } : l)));

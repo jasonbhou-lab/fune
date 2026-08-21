@@ -22,7 +22,7 @@ function fromCsv(str) {
     .filter(Boolean);
 }
 
-export default function PortalCatalogEditor({ token, offering, locationId, onDone, onCancel }) {
+export default function PortalCatalogEditor({ token, offering, locationId, onDone, onCancel, actAsOrg}) {
   const isNew = !offering;
   const [name, setName] = useState(offering?.name || "");
   const [category, setCategory] = useState(offering?.category || "cremation");
@@ -59,12 +59,12 @@ export default function PortalCatalogEditor({ token, offering, locationId, onDon
     setSaving(true);
     try {
       if (isNew) {
-        const created = await api.portalCreateOffering(token, { locationId, ...buildPayload(status === "published" ? "draft" : status) });
+        const created = await api.portalCreateOffering(token, { locationId, ...buildPayload(status === "published" ? "draft" : status) }, actAsOrg);
         if (status === "published") {
-          await api.portalUpdateOffering(token, created.id, buildPayload("published"));
+          await api.portalUpdateOffering(token, created.id, buildPayload("published"), actAsOrg);
         }
       } else {
-        await api.portalUpdateOffering(token, offering.id, buildPayload(status));
+        await api.portalUpdateOffering(token, offering.id, buildPayload(status), actAsOrg);
       }
       onDone();
     } catch (e) {
