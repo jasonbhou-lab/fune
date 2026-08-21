@@ -242,10 +242,33 @@ export default function SignInScreen() {
     }
   };
 
+  // The same required answers as the email path. Signing up with Google skips
+  // the password, not the questions: an account still needs to know which half
+  // of the product it belongs to, and a provider still needs an organization.
+  const signupAnswersMissing =
+    mode === "signup" &&
+    (!accountType || (accountType === "provider" && !orgClaim?.orgId && !orgClaim?.orgName));
+
   const handleGoogleSignIn = async () => {
     setError(null);
+    if (signupAnswersMissing) {
+      // Left enabled and answered with a message rather than disabled, so it is
+      // clear WHY it did nothing.
+      setError(
+        !accountType
+          ? "Choose which describes you before continuing with Google."
+          : "Choose your organization, or enter its name if it isn't listed."
+      );
+      return;
+    }
     try {
-      await googleAuth();
+      // On the signup form the answers are carried through the Google round trip
+      // so they aren't asked twice. On the sign-in form there is nothing to carry.
+      await googleAuth(
+        mode === "signup"
+          ? { accountType, orgId: orgClaim?.orgId || null, orgName: orgClaim?.orgId ? null : orgClaim?.orgName || null }
+          : null
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -505,11 +528,12 @@ export default function SignInScreen() {
             </View>
             <GoogleSignInButton onPress={handleGoogleSignIn} />
             {mode === "signup" ? (
-              // Used to read "creates a consumer account", which stopped being
-              // true once Google signups started being asked the same questions
-              // on ChooseRoleScreen.
               <Text style={[type.caption, onGradientMuted, { marginTop: spacing.sm, textAlign: "center" }]}>
-                We'll ask which of these you are after you sign in with Google.
+                {signupAnswersMissing
+                  ? "Answer the questions above first, then you can sign up with Google."
+                  : accountType === "provider"
+                    ? "Google keeps your answers above — no password needed."
+                    : "No password needed."}
               </Text>
             ) : null}
           </>

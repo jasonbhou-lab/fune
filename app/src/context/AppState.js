@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import { Linking, Platform } from "react-native";
 import { DEFAULT_FILTERS } from "../attributes";
 import { supabaseAuth, fetchProfile } from "../supabaseClient";
+import { SELF_SERVICE_ACCOUNT_TYPES } from "../accountTypes";
+import { saveSignupIntent, takeSignupIntent, clearSignupIntent } from "../signupIntent";
 import {
   buildPasswordResetRedirectUrl,
   buildEmailConfirmationRedirectUrl,
@@ -12,14 +14,10 @@ import {
 
 const AppStateContext = createContext(null);
 
-// Roles a person can choose for themselves on the signup form. platform_admin
-// is absent on purpose and the database enforces the same whitelist — see
-// handle_new_user() in supabase/schema.sql. Offering it here would let anyone
-// grant themselves the admin back office from a public form.
-export const SELF_SERVICE_ACCOUNT_TYPES = [
-  { id: "consumer", label: "I'm planning or arranging a funeral" },
-  { id: "provider", label: "I work for a funeral home or provider" },
-];
+// Re-exported so the many screens already importing it from here keep working;
+// the list itself moved to accountTypes.js because signupIntent.js needs it and
+// importing this module from there would be a cycle.
+export { SELF_SERVICE_ACCOUNT_TYPES };
 
 // Provider roles that must hold a second factor before they get in.
 const MFA_REQUIRED_PROVIDER_ROLES = ["owner", "administrator"];
@@ -68,12 +66,44 @@ export function AppStateProvider({ children }) {
     return profile;
   };
 
+  /**
+   * Load the profile and, for a brand-new Google account, apply the answers
+   * given before the redirect.
+   *
+   * Google hands back a verified identity and nothing else, so handle_new_user()
+   * flags the profile role_pending. If the person answered the signup questions
+   * before pressing "Continue with Google", those answers were parked in storage
+   * (React state does not survive a full-page redirect) and this is where they
+   * get spent — so they are not asked the same questions twice.
+   *
+   * Only ever applied to a role_pending profile, which by construction means an
+   * account that has never chosen. If anything is missing, stale, or the claim is
+   * rejected, the flag stays set and ChooseRoleScreen asks properly. That is the
+   * fallback for every failure here, which is why none of them throw.
+   */
+  const resolveProfile = async (userId) => {
+    const profile = await loadProfile(userId);
+    if (!profile?.rolePending) return profile;
+
+    const intent = await takeSignupIntent();
+    if (!intent) return profile;
+
+    try {
+      const claimed = await claimAccountTypeFor(intent, userId);
+      return claimed || profile;
+    } catch {
+      // Organization deleted since, claim already spent, offline — let the
+      // prompt handle it rather than blocking the sign-in.
+      return profile;
+    }
+  };
+
   useEffect(() => {
     (async () => {
       const { data } = await supabaseAuth.auth.getSession();
       if (data.session) {
         setSession(data.session);
-        setUser(await loadProfile(data.session.user.id));
+        setUser(await resolveProfile(data.session.user.id));
       }
       setAuthLoading(false);
     })();
@@ -105,7 +135,7 @@ export function AppStateProvider({ children }) {
     if (!userId || user?.id === userId) return;
     let cancelled = false;
     (async () => {
-      const profile = await loadProfile(userId);
+      const profile = await resolveProfile(userId);
       if (!cancelled) setUser(profile);
     })();
     return () => {
@@ -306,16 +336,30 @@ export function AppStateProvider({ children }) {
    * whitelists the two self-service roles and clears the flag in the same
    * statement, so it works exactly once.
    */
-  const claimAccountType = async (accountType, orgClaim = null) => {
+  /**
+   * The RPC call plus a profile reload. Shared by the prompt and by the
+   * parked-intent path, and deliberately state-free so callers decide what to do
+   * with the result.
+   *
+   * userId is passed in rather than read from `session`: on the OAuth return the
+   * session is installed and this runs in the same tick as setSession, so the
+   * state variable is still the previous (null) value.
+   */
+  const claimAccountTypeFor = async ({ accountType, orgId = null, orgName = null }, userId) => {
     const { error } = await supabaseAuth.rpc("claim_account_type", {
       p_account_type: accountType,
-      p_org_id: accountType === "provider" ? orgClaim?.orgId || null : null,
-      p_org_name: accountType === "provider" && !orgClaim?.orgId ? orgClaim?.orgName || null : null,
+      p_org_id: accountType === "provider" ? orgId || null : null,
+      p_org_name: accountType === "provider" && !orgId ? orgName || null : null,
     });
     if (error) throw new Error(error.message);
+    return userId ? await loadProfile(userId) : null;
+  };
 
-    const userId = session?.user?.id;
-    const profile = userId ? await loadProfile(userId) : null;
+  const claimAccountType = async (accountType, orgClaim = null) => {
+    const profile = await claimAccountTypeFor(
+      { accountType, orgId: orgClaim?.orgId, orgName: orgClaim?.orgName },
+      session?.user?.id
+    );
     setUser(profile);
     return profile;
   };
@@ -343,12 +387,30 @@ export function AppStateProvider({ children }) {
     return profile;
   };
 
-  const googleAuth = async () => {
+  /**
+   * Hand off to Google.
+   *
+   * `intent` is the signup answers, when the person filled them in before
+   * choosing Google rather than a password. They are parked in storage first,
+   * because this call navigates the whole page away and React state does not
+   * come back. resolveProfile() spends them on return.
+   *
+   * Called with no intent from the sign-in form, where there is nothing to carry.
+   */
+  const googleAuth = async (intent = null) => {
+    if (intent) await saveSignupIntent(intent);
+    else await clearSignupIntent();
+
     const { error } = await supabaseAuth.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      // The redirect never happened, so the parked answers would otherwise sit
+      // there waiting to be applied to some later, unrelated sign-in.
+      await clearSignupIntent();
+      throw new Error(error.message);
+    }
   };
 
   /**
@@ -380,6 +442,9 @@ export function AppStateProvider({ children }) {
   const logout = async () => {
     setPasswordRecovery(false);
     setRecoveryError(null);
+    // Nothing half-finished should survive a sign-out and land on the next
+    // person to use this browser.
+    await clearSignupIntent();
     await supabaseAuth.auth.signOut();
     setUser(null);
   };
