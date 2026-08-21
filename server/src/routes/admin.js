@@ -1,7 +1,7 @@
 import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
-import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, appendAudit } from "../db.js";
-import { priceDisplay, disclosureCompleteness } from "../serialize.js";
+import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, REVIEW_COLUMNS, appendAudit } from "../db.js";
+import { priceDisplay, disclosureCompleteness, serializeReview } from "../serialize.js";
 import { requireAuth } from "../auth.js";
 import { asString, asSlug, asEnum, LIMITS } from "../validate.js";
 
@@ -186,6 +186,114 @@ router.post("/org-claims/:profileId/reject", async (req, res) => {
   });
 
   res.json(updated);
+});
+
+const REVIEW_REPORT_STATUSES = ["open", "resolved", "dismissed"];
+const REVIEW_STATUSES = ["published", "hidden"];
+
+/**
+ * Reported reviews, newest first.
+ *
+ * The review is embedded rather than referenced so the decision can be made on
+ * one screen: judging whether a review should come down without reading it is
+ * not a decision anyone should be asked to make.
+ */
+router.get("/review-reports", async (req, res) => {
+  const status = asEnum(req.query.status, REVIEW_REPORT_STATUSES, { field: "status" });
+
+  let query = supabase
+    .from("review_reports")
+    .select(
+      `id, reason, details, status, createdAt:created_at,
+       review:reviews!review_reports_review_id_fkey(
+         ${REVIEW_COLUMNS},
+         author:profiles!reviews_author_id_fkey(name),
+         org:orgs!reviews_org_id_fkey(id, name)
+       )`
+    )
+    .order("created_at", { ascending: false })
+    .limit(MAX_ROWS);
+  if (status) query = query.eq("status", status);
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: "Couldn't load review reports." });
+
+  res.json(
+    (data || []).map((r) => ({
+      id: r.id,
+      reason: r.reason,
+      details: r.details || "",
+      status: r.status,
+      createdAt: r.createdAt,
+      review: r.review
+        ? {
+            ...serializeReview(r.review),
+            hidden: r.review.status === "hidden",
+            orgId: r.review.org?.id || null,
+            orgName: r.review.org?.name || null,
+          }
+        : null,
+    }))
+  );
+});
+
+/**
+ * Take a review down, or put it back.
+ *
+ * Hiding removes it from every consumer response and from the rating average, so
+ * this both silences and un-skews. It is recorded in the audit log because it is
+ * the platform overriding what a member of the public said about a business.
+ */
+router.patch("/reviews/:id", async (req, res) => {
+  const status = asEnum(req.body?.status, REVIEW_STATUSES, { field: "status", required: true });
+  const reason = asString(req.body?.reason, { field: "reason", max: LIMITS.shortText, allowEmpty: true });
+
+  const { data: existing, error: findError } = await supabase
+    .from("reviews")
+    .select("id, status")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (findError || !existing) return res.status(404).json({ error: "Review not found." });
+
+  const { data: updated, error } = await supabase
+    .from("reviews")
+    .update({ status, hidden_reason: status === "hidden" ? reason || null : null })
+    .eq("id", req.params.id)
+    .select(`${REVIEW_COLUMNS}, author:profiles!reviews_author_id_fkey(name)`)
+    .single();
+  if (error) return res.status(500).json({ error: "Couldn't update the review." });
+
+  await appendAudit({
+    actor: req.user.name,
+    action: "review_status_set",
+    entity: req.params.id,
+    from: existing.status,
+    to: reason ? `${status} (${reason})` : status,
+  });
+
+  res.json({ ...serializeReview(updated), hidden: updated.status === "hidden" });
+});
+
+router.patch("/review-reports/:id", async (req, res) => {
+  const status = asEnum(req.body?.status, REVIEW_REPORT_STATUSES, { field: "status", required: true });
+
+  const { data, error } = await supabase
+    .from("review_reports")
+    .update({ status })
+    .eq("id", req.params.id)
+    .select("id, status")
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't update the report." });
+  if (!data) return res.status(404).json({ error: "Report not found." });
+
+  await appendAudit({
+    actor: req.user.name,
+    action: "review_report_status_set",
+    entity: req.params.id,
+    to: status,
+  });
+
+  res.json(data);
 });
 
 router.get("/offerings", async (req, res) => {

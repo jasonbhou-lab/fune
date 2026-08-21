@@ -10,12 +10,14 @@ import PortalCatalogEditor from "./PortalCatalogEditor";
 import PortalLeads from "./PortalLeads";
 import PortalLeadDetail from "./PortalLeadDetail";
 import PortalLocations from "./PortalLocations";
+import PortalReviews from "./PortalReviews";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard" },
   { id: "locations", label: "Locations" },
   { id: "catalog", label: "Catalog" },
   { id: "leads", label: "Leads" },
+  { id: "reviews", label: "Reviews" },
 ];
 
 export default function PortalHomeScreen({ navigation }) {
@@ -123,6 +125,8 @@ export default function PortalHomeScreen({ navigation }) {
         {view === "dashboard" && <PortalDashboard token={providerToken} />}
 
         {view === "locations" && <PortalLocations token={providerToken} />}
+
+        {view === "reviews" && <PortalReviews token={providerToken} />}
 
         {view === "catalog" && editingOffering === undefined && (
           <PortalCatalog

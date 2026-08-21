@@ -91,6 +91,26 @@ export const api = {
   portalLead: (token, id) => request(`/portal/leads/${id}`, { token }),
   portalUpdateLead: (token, id, payload) => request(`/portal/leads/${id}`, { method: "PATCH", body: payload, token }),
 
+  // Reviews — public to read, consumer-authenticated to write.
+  orgReviews: (orgId, { sort, rating, page, pageSize } = {}, token) => {
+    const params = new URLSearchParams();
+    if (sort) params.set("sort", sort);
+    if (rating) params.set("rating", String(rating));
+    if (page) params.set("page", String(page));
+    if (pageSize) params.set("pageSize", String(pageSize));
+    const qs = params.toString();
+    return request(`/orgs/${orgId}/reviews${qs ? `?${qs}` : ""}`, { token });
+  },
+  myReview: (token, orgId) => request(`/orgs/${orgId}/reviews/mine`, { token }),
+  submitReview: (token, orgId, payload) => request(`/orgs/${orgId}/reviews`, { method: "POST", body: payload, token }),
+  deleteMyReview: (token, orgId) => request(`/orgs/${orgId}/reviews/mine`, { method: "DELETE", token }),
+  reportReview: (reviewId, payload, token) => request(`/reviews/${reviewId}/report`, { method: "POST", body: payload, token }),
+
+  // Provider replies to its own reviews.
+  portalReviews: (token) => request("/portal/reviews", { token }),
+  portalRespondToReview: (token, id, body) => request(`/portal/reviews/${id}/response`, { method: "PUT", body: { body }, token }),
+  portalDeleteReviewResponse: (token, id) => request(`/portal/reviews/${id}/response`, { method: "DELETE", token }),
+
   // Consumer pricing report
   submitReport: (payload, token) => request("/reports", { method: "POST", body: payload, token }),
 
@@ -106,6 +126,11 @@ export const api = {
   adminDeleteCategory: (token, id) => request(`/admin/taxonomy/${id}`, { method: "DELETE", token }),
   adminReports: (token, status) => request(`/admin/reports${status ? `?status=${status}` : ""}`, { token }),
   adminSetReportStatus: (token, id, status) => request(`/admin/reports/${id}`, { method: "PATCH", body: { status }, token }),
+  adminReviewReports: (token, status) => request(`/admin/review-reports${status ? `?status=${status}` : ""}`, { token }),
+  adminSetReviewStatus: (token, id, status, reason) =>
+    request(`/admin/reviews/${id}`, { method: "PATCH", body: { status, reason }, token }),
+  adminSetReviewReportStatus: (token, id, status) =>
+    request(`/admin/review-reports/${id}`, { method: "PATCH", body: { status }, token }),
   adminOrgClaims: (token) => request("/admin/org-claims", { token }),
   adminApproveOrgClaim: (token, profileId, providerRole) =>
     request(`/admin/org-claims/${profileId}/approve`, { method: "POST", body: { providerRole }, token }),

@@ -122,6 +122,54 @@ export function serializeLocation({ location, org }) {
   };
 }
 
+/**
+ * Rating summary in the shape the app renders.
+ *
+ * Absent stats mean nobody has reviewed this provider yet, which is a real and
+ * common state — it must read as "no reviews", not as zero stars, or a new
+ * funeral home looks worse than a badly-reviewed one.
+ */
+export function ratingSummary(stats) {
+  if (!stats || !stats.reviewCount) {
+    return { average: null, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } };
+  }
+  return {
+    // Postgres numeric arrives as a string over the wire.
+    average: Number(stats.ratingAvg),
+    count: stats.reviewCount,
+    distribution: {
+      5: stats.count5 || 0,
+      4: stats.count4 || 0,
+      3: stats.count3 || 0,
+      2: stats.count2 || 0,
+      1: stats.count1 || 0,
+    },
+  };
+}
+
+/**
+ * One review for public display.
+ *
+ * The author's name comes from their profile, and nothing else about them is
+ * included — no email, no id — because this is the most public surface in the
+ * product. `mine` lets the app show edit and delete on the viewer's own review
+ * without the client having to know any other user's id.
+ */
+export function serializeReview(review, { viewerId = null } = {}) {
+  return {
+    id: review.id,
+    orgId: review.orgId,
+    rating: review.rating,
+    body: review.body || "",
+    authorName: review.author?.name || "Someone",
+    createdAt: review.createdAt,
+    // Only meaningful once edited; the app uses it for an "edited" marker.
+    edited: Boolean(review.updatedAt && review.createdAt && review.updatedAt !== review.createdAt),
+    response: review.responseBody ? { body: review.responseBody, at: review.responseAt } : null,
+    mine: Boolean(viewerId) && review.authorId === viewerId,
+  };
+}
+
 export function thirdPartyCell(offering) {
   const tp = offering.thirdParty || [];
   if (tp.length === 0) return { text: "Included", state: "included" };

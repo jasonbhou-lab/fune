@@ -371,6 +371,96 @@ create table pricing_reports (
   created_at timestamptz not null default now()
 );
 
+-- ---------------------------------------------------------------------------
+-- Reviews
+-- ---------------------------------------------------------------------------
+
+-- A consumer's 1-5 star rating of a provider, with optional prose. Live on
+-- submit, one per person per organization, editable by its author, answerable
+-- once by the provider, reportable by anyone, hideable by a platform admin.
+--
+-- Attached to the organization rather than the location because the org is what
+-- the consumer UI calls "the provider" everywhere — serializeForSearch sends
+-- providerName: org.name, and the offer page shows the same — so it is what a
+-- reviewer believes they are rating.
+create table reviews (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  author_id uuid not null references profiles(id) on delete cascade,
+  rating smallint not null check (rating between 1 and 5),
+  -- Optional: a star-only review is legitimate, same as Google.
+  body text check (body is null or char_length(body) <= 4000),
+
+  -- 'published' is public. 'hidden' is an admin takedown: it drops out of every
+  -- consumer response AND out of the rating average. Authors delete their own
+  -- outright, so there is no author-facing state here.
+  status text not null default 'published' check (status in ('published', 'hidden')),
+  hidden_reason text,
+
+  -- The provider's public answer. One reply per review, like Google's
+  -- "Response from the owner".
+  response_body text check (response_body is null or char_length(response_body) <= 4000),
+  response_author_id uuid references profiles(id) on delete set null,
+  response_at timestamptz,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- Re-reviewing edits the original. Without this, one unhappy customer could
+  -- become ten one-star rows.
+  unique (org_id, author_id)
+);
+
+create index reviews_org_published_idx on reviews (org_id, created_at desc) where status = 'published';
+create index reviews_author_idx on reviews (author_id);
+
+create table review_reports (
+  id uuid primary key default gen_random_uuid(),
+  review_id uuid not null references reviews(id) on delete cascade,
+  reporter_id uuid references profiles(id) on delete set null,
+  reason text not null check (reason in ('spam', 'off_topic', 'not_a_customer', 'offensive', 'privacy', 'other')),
+  details text default '',
+  status text not null default 'open' check (status in ('open', 'resolved', 'dismissed')),
+  created_at timestamptz not null default now()
+);
+
+create index review_reports_open_idx on review_reports (status, created_at desc) where status = 'open';
+
+-- Rating aggregates, including the 1-5 histogram shown as bars.
+--
+-- A view rather than denormalised columns on orgs: these are derived numbers,
+-- and a trigger-maintained copy is one more thing that can drift out of step
+-- with reality. security_invoker keeps row-level security on reviews applying to
+-- whoever selects from the view, rather than to the view's owner.
+create view org_review_stats with (security_invoker = on) as
+select
+  org_id,
+  count(*)::int as review_count,
+  round(avg(rating)::numeric, 2) as rating_avg,
+  count(*) filter (where rating = 5)::int as count_5,
+  count(*) filter (where rating = 4)::int as count_4,
+  count(*) filter (where rating = 3)::int as count_3,
+  count(*) filter (where rating = 2)::int as count_2,
+  count(*) filter (where rating = 1)::int as count_1
+from reviews
+where status = 'published'
+group by org_id;
+
+-- Keep updated_at honest without trusting the caller to send it.
+create function public.touch_reviews_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql set search_path = public;
+
+create trigger reviews_touch_updated_at
+  before update on reviews
+  for each row execute function public.touch_reviews_updated_at();
+
+revoke execute on function public.touch_reviews_updated_at() from public, anon, authenticated;
+
 create table audit_log (
   id uuid primary key default gen_random_uuid(),
   actor text not null,
@@ -407,6 +497,11 @@ alter table saved_comparisons enable row level security;
 alter table leads enable row level security;
 alter table lead_status_history enable row level security;
 alter table pricing_reports enable row level security;
+-- Reviews are public data, but they are still served through the backend like
+-- everything else: reading them applies sort/filter caps and hides admin
+-- takedowns, and writing one has to enforce one-per-person and authorship.
+alter table reviews enable row level security;
+alter table review_reports enable row level security;
 alter table audit_log enable row level security;
 alter table analytics_events enable row level security;
 

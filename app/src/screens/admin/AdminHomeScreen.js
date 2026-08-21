@@ -8,6 +8,7 @@ import AdminOrgClaims from "./AdminOrgClaims";
 import AdminModeration from "./AdminModeration";
 import AdminTaxonomy from "./AdminTaxonomy";
 import AdminReports from "./AdminReports";
+import AdminReviews from "./AdminReviews";
 import AdminAuditLog from "./AdminAuditLog";
 import AdminAnalytics from "./AdminAnalytics";
 
@@ -17,6 +18,7 @@ const NAV = [
   { id: "moderation", label: "Moderation" },
   { id: "taxonomy", label: "Taxonomy" },
   { id: "reports", label: "Reports" },
+  { id: "reviews", label: "Reviews" },
   { id: "audit", label: "Audit log" },
   { id: "analytics", label: "Analytics" },
 ];
@@ -71,6 +73,7 @@ export default function AdminHomeScreen({ navigation }) {
         {view === "moderation" && <AdminModeration token={adminToken} />}
         {view === "taxonomy" && <AdminTaxonomy token={adminToken} />}
         {view === "reports" && <AdminReports token={adminToken} />}
+        {view === "reviews" && <AdminReviews token={adminToken} />}
         {view === "audit" && <AdminAuditLog token={adminToken} />}
         {view === "analytics" && <AdminAnalytics token={adminToken} />}
       </View>

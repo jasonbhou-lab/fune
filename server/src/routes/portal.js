@@ -1,7 +1,14 @@
 import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
-import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS } from "../db.js";
-import { priceDisplay, disclosureCompleteness, daysSince, ATTRIBUTE_KEYS } from "../serialize.js";
+import { OFFERING_COLUMNS, ORG_COLUMNS, LOCATION_COLUMNS, REVIEW_COLUMNS, reviewStatsFor } from "../db.js";
+import {
+  priceDisplay,
+  disclosureCompleteness,
+  daysSince,
+  ratingSummary,
+  serializeReview,
+  ATTRIBUTE_KEYS,
+} from "../serialize.js";
 import { requireAuth } from "../auth.js";
 import { offeringsToCsv, parseCsv } from "../csv.js";
 import { bulkLimiter } from "../rateLimit.js";
@@ -74,6 +81,74 @@ async function assertOwnsMember(orgId, profileId) {
 }
 
 router.use(requireAuth("provider"));
+
+const MAX_PORTAL_REVIEWS = 200;
+
+/**
+ * The organization's own reviews, so a provider can read and answer them.
+ *
+ * Scoped to req.user.orgId, never to an id from the request, so one provider
+ * cannot read another's reviews. Admin-hidden reviews are included and labelled:
+ * the provider should be able to see that a takedown happened on their own
+ * listing, unlike the public, who should not see the review at all.
+ */
+router.get("/reviews", async (req, res) => {
+  const { orgId } = req.user;
+  if (!orgId) return res.json({ summary: ratingSummary(null), reviews: [] });
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .select(`${REVIEW_COLUMNS}, author:profiles!reviews_author_id_fkey(name)`)
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false })
+    .limit(MAX_PORTAL_REVIEWS);
+  if (error) return res.status(500).json({ error: "Couldn't load reviews." });
+
+  const stats = await reviewStatsFor([orgId]);
+  res.json({
+    summary: ratingSummary(stats.get(orgId)),
+    reviews: (data || []).map((r) => ({
+      ...serializeReview(r),
+      hidden: r.status === "hidden",
+      // Answering is the provider's job, so they need to see which are unanswered.
+      needsResponse: r.status === "published" && !r.responseBody,
+    })),
+  });
+});
+
+/** Publish or replace the organization's public reply to one of its reviews. */
+router.put("/reviews/:id/response", async (req, res) => {
+  const { orgId } = req.user;
+  const body = asString(req.body?.body, { field: "Response", max: LIMITS.message, required: true });
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .update({ response_body: body, response_author_id: req.user.id, response_at: new Date().toISOString() })
+    // Both conditions matter: the id says which review, the org id says it is
+    // theirs to answer. Without the second, any provider could reply on any
+    // organization's listing.
+    .eq("id", req.params.id)
+    .eq("org_id", orgId)
+    .select(`${REVIEW_COLUMNS}, author:profiles!reviews_author_id_fkey(name)`)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't save your response." });
+  if (!data) return res.status(404).json({ error: "Review not found." });
+  res.json(serializeReview(data));
+});
+
+router.delete("/reviews/:id/response", async (req, res) => {
+  const { orgId } = req.user;
+  const { data, error } = await supabase
+    .from("reviews")
+    .update({ response_body: null, response_author_id: null, response_at: null })
+    .eq("id", req.params.id)
+    .eq("org_id", orgId)
+    .select("id")
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't remove your response." });
+  if (!data) return res.status(404).json({ error: "Review not found." });
+  res.json({ ok: true });
+});
 
 router.get("/dashboard", async (req, res) => {
   const { orgId } = req.user;

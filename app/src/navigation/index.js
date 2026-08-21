@@ -19,6 +19,7 @@ import HistoryScreen from "../screens/consumer/HistoryScreen";
 import AccountScreen from "../screens/consumer/AccountScreen";
 import SignInScreen from "../screens/consumer/SignInScreen";
 import ChooseRoleScreen from "../screens/consumer/ChooseRoleScreen";
+import WriteReviewScreen from "../screens/consumer/WriteReviewScreen";
 import CommPrefsScreen from "../screens/consumer/CommPrefsScreen";
 
 import PortalHomeScreen from "../screens/portal/PortalHomeScreen";
@@ -48,6 +49,7 @@ function SearchStackNavigator() {
       <SearchStack.Screen name="Results" component={SearchResultsScreen} options={{ title: "Search results" }} />
       <SearchStack.Screen name="Filters" component={FiltersScreen} options={{ title: "Filters" }} />
       <SearchStack.Screen name="OfferDetail" component={OfferDetailScreen} options={{ title: "Offer detail" }} />
+      <SearchStack.Screen name="WriteReview" component={WriteReviewScreen} options={{ title: "Write a review" }} />
       <SearchStack.Screen name="Compare" component={CompareScreen} options={{ title: "Compare" }} />
       <SearchStack.Screen name="LeadForm" component={LeadFormScreen} options={{ title: "Request pricing" }} />
       <SearchStack.Screen name="Confirmation" component={ConfirmationScreen} options={{ title: "Request sent", headerBackVisible: false }} />
@@ -60,6 +62,7 @@ function SavedStackNavigator() {
     <SavedStack.Navigator screenOptions={stackOptions}>
       <SavedStack.Screen name="Saved" component={SavedScreen} options={{ title: "Saved" }} />
       <SavedStack.Screen name="OfferDetail" component={OfferDetailScreen} options={{ title: "Offer detail" }} />
+      <SavedStack.Screen name="WriteReview" component={WriteReviewScreen} options={{ title: "Write a review" }} />
       <SavedStack.Screen name="Compare" component={CompareScreen} options={{ title: "Compare" }} />
       <SavedStack.Screen name="LeadForm" component={LeadFormScreen} options={{ title: "Request pricing" }} />
       <SavedStack.Screen name="Confirmation" component={ConfirmationScreen} options={{ title: "Request sent", headerBackVisible: false }} />

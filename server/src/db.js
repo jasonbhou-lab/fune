@@ -19,6 +19,33 @@ export const OFFERING_COLUMNS = `
   included, excluded, thirdParty:third_party, status
 `;
 
+export const REVIEW_COLUMNS = `
+  id, orgId:org_id, authorId:author_id, rating, body, status,
+  responseBody:response_body, responseAt:response_at,
+  createdAt:created_at, updatedAt:updated_at
+`;
+
+export const REVIEW_STATS_COLUMNS = `
+  orgId:org_id, reviewCount:review_count, ratingAvg:rating_avg,
+  count5:count_5, count4:count_4, count3:count_3, count2:count_2, count1:count_1
+`;
+
+/**
+ * Rating summaries for a set of organizations, as a Map keyed by org id.
+ *
+ * Bounded by the caller's id list on purpose. Search can return up to
+ * MAX_SEARCH_RESULTS rows, and fetching stats per row would be an N+1; fetching
+ * the whole view would be an unbounded scan that grows with every review ever
+ * written. One `in` query over the ids actually being rendered is neither.
+ */
+export async function reviewStatsFor(orgIds) {
+  const unique = [...new Set((orgIds || []).filter(Boolean))];
+  if (unique.length === 0) return new Map();
+  const { data, error } = await supabase.from("org_review_stats").select(REVIEW_STATS_COLUMNS).in("org_id", unique);
+  if (error) return new Map();
+  return new Map((data || []).map((row) => [row.orgId, row]));
+}
+
 export async function findLocation(locationId) {
   const { data, error } = await supabase
     .from("locations")

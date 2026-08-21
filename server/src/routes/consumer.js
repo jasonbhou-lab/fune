@@ -1,6 +1,16 @@
 import { createRouter } from "../router.js";
 import { supabase, requireSupabase } from "../supabaseClient.js";
-import { OFFERING_COLUMNS, LOCATION_COLUMNS, ORG_COLUMNS, findLocation, findOffering, appendAudit, trackEvent } from "../db.js";
+import {
+  OFFERING_COLUMNS,
+  LOCATION_COLUMNS,
+  ORG_COLUMNS,
+  REVIEW_COLUMNS,
+  findLocation,
+  findOffering,
+  appendAudit,
+  trackEvent,
+  reviewStatsFor,
+} from "../db.js";
 import { geocodeZip } from "../geo.js";
 import {
   serializeForSearch,
@@ -8,11 +18,13 @@ import {
   serializeLocation,
   thirdPartyCell,
   priceDisplay,
+  ratingSummary,
+  serializeReview,
   ATTRIBUTE_KEYS,
 } from "../serialize.js";
 import { requireAuth, optionalAuth } from "../auth.js";
-import { leadLimiter, reportLimiter, searchLimiter } from "../rateLimit.js";
-import { asString, asEnum, asEmail, asPhone, asStringArray, LIMITS } from "../validate.js";
+import { leadLimiter, reportLimiter, searchLimiter, reviewLimiter } from "../rateLimit.js";
+import { asString, asEnum, asEmail, asPhone, asNumber, asStringArray, ValidationError, LIMITS } from "../validate.js";
 
 const router = createRouter();
 router.use((req, res, next) => (requireSupabase(res) ? next() : undefined));
@@ -36,6 +48,176 @@ const REPORT_REASONS = ["price_seems_wrong", "listing_outdated", "other"];
 
 // How many organizations the signup picker will list at once.
 const MAX_ORG_DIRECTORY = 50;
+
+// Reviews are the one list that grows without limit for a popular provider, so
+// it is paged rather than capped-and-truncated.
+const REVIEWS_PAGE_SIZE = 10;
+const MAX_REVIEWS_PAGE_SIZE = 50;
+const REVIEW_SORTS = ["recent", "highest", "lowest"];
+const REVIEW_REPORT_REASONS = ["spam", "off_topic", "not_a_customer", "offensive", "privacy", "other"];
+
+/**
+ * Public reviews for one organization, plus the rating summary.
+ *
+ * Unauthenticated because reviews are public, like Google's. optionalAuth is
+ * used only so a signed-in reader's own review can be marked `mine`, and so the
+ * app knows whether to offer "write a review" or "edit yours" — a failure to
+ * resolve the token degrades to anonymous rather than erroring.
+ */
+router.get("/orgs/:orgId/reviews", searchLimiter, optionalAuth, async (req, res) => {
+  const sort = asEnum(req.query.sort, REVIEW_SORTS, { field: "sort" }) || "recent";
+  const ratingFilter = asNumber(req.query.rating, { field: "rating", min: 1, max: 5 });
+  const page = asNumber(req.query.page, { field: "page", min: 0, max: 1000 }) || 0;
+  const size = asNumber(req.query.pageSize, { field: "pageSize", min: 1, max: MAX_REVIEWS_PAGE_SIZE }) || REVIEWS_PAGE_SIZE;
+
+  const { data: org, error: orgError } = await supabase
+    .from("orgs")
+    .select(ORG_COLUMNS)
+    .eq("id", req.params.orgId)
+    .maybeSingle();
+  if (orgError || !org) return res.status(404).json({ error: "Organization not found." });
+
+  let query = supabase
+    .from("reviews")
+    .select(`${REVIEW_COLUMNS}, author:profiles!reviews_author_id_fkey(name)`, { count: "exact" })
+    // Admin takedowns are invisible here, and they are already excluded from the
+    // stats view, so the list and the average always agree.
+    .eq("org_id", org.id)
+    .eq("status", "published");
+
+  if (ratingFilter !== null) query = query.eq("rating", Math.trunc(ratingFilter));
+
+  if (sort === "highest") query = query.order("rating", { ascending: false }).order("created_at", { ascending: false });
+  else if (sort === "lowest") query = query.order("rating", { ascending: true }).order("created_at", { ascending: false });
+  else query = query.order("created_at", { ascending: false });
+
+  const from = Math.trunc(page) * Math.trunc(size);
+  const { data, error, count } = await query.range(from, from + Math.trunc(size) - 1);
+  if (error) return res.status(500).json({ error: "Couldn't load reviews." });
+
+  const stats = await reviewStatsFor([org.id]);
+  const viewerId = req.user?.id || null;
+
+  // Asked for directly rather than picked out of the page above. The viewer's
+  // own review may well not be on this page — page 2, or filtered out by a star
+  // filter — and inferring "you haven't reviewed this" from its absence would
+  // offer them a "write a review" button that then silently overwrote the review
+  // they had already left.
+  let myReview = null;
+  if (viewerId) {
+    const { data: mine } = await supabase
+      .from("reviews")
+      .select("id, rating, body")
+      .eq("org_id", org.id)
+      .eq("author_id", viewerId)
+      .maybeSingle();
+    if (mine) myReview = { id: mine.id, rating: mine.rating, body: mine.body || "" };
+  }
+
+  res.json({
+    org: { id: org.id, name: org.name, verified: org.verified },
+    summary: ratingSummary(stats.get(org.id)),
+    // The filtered total, so the app knows whether another page exists.
+    matched: count ?? 0,
+    page: Math.trunc(page),
+    pageSize: Math.trunc(size),
+    reviews: (data || []).map((r) => serializeReview(r, { viewerId })),
+    myReview,
+  });
+});
+
+/** The signed-in consumer's own review of an organization, if any. */
+router.get("/orgs/:orgId/reviews/mine", requireAuth("consumer"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("reviews")
+    .select(REVIEW_COLUMNS)
+    .eq("org_id", req.params.orgId)
+    .eq("author_id", req.user.id)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't load your review." });
+  if (!data) return res.json(null);
+  res.json({ id: data.id, rating: data.rating, body: data.body || "", status: data.status });
+});
+
+/**
+ * Write or replace the consumer's review of an organization.
+ *
+ * Upsert rather than insert: one review per person per organization is enforced
+ * by a unique constraint, and posting again is how Google's "edit your review"
+ * works, so a second POST should update rather than 409.
+ */
+router.post("/orgs/:orgId/reviews", reviewLimiter, requireAuth("consumer"), async (req, res) => {
+  const rating = asNumber(req.body?.rating, { field: "rating", min: 1, max: 5 });
+  if (rating === null) throw new ValidationError("rating is required.");
+  if (!Number.isInteger(rating)) throw new ValidationError("rating must be a whole number of stars.");
+  const body = asString(req.body?.body, { field: "body", max: LIMITS.message, allowEmpty: true });
+
+  const { data: org, error: orgError } = await supabase
+    .from("orgs")
+    .select("id")
+    .eq("id", req.params.orgId)
+    .maybeSingle();
+  if (orgError || !org) return res.status(404).json({ error: "Organization not found." });
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .upsert(
+      { org_id: org.id, author_id: req.user.id, rating, body: body || null },
+      { onConflict: "org_id,author_id" }
+    )
+    .select(`${REVIEW_COLUMNS}, author:profiles!reviews_author_id_fkey(name)`)
+    .single();
+  if (error) return res.status(500).json({ error: "Couldn't save your review." });
+
+  // An edit does not clear an existing provider response, matching Google, where
+  // the reply stays attached to the review it answered.
+  res.status(201).json(serializeReview(data, { viewerId: req.user.id }));
+});
+
+/** Delete the consumer's own review. Scoped by author so it can only be theirs. */
+router.delete("/orgs/:orgId/reviews/mine", requireAuth("consumer"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("reviews")
+    .delete()
+    .eq("org_id", req.params.orgId)
+    .eq("author_id", req.user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't remove your review." });
+  if (!data) return res.status(404).json({ error: "You haven't reviewed this provider." });
+  res.json({ ok: true });
+});
+
+/**
+ * Report a review. Anyone can, signed in or not, because the person most likely
+ * to spot a fake review about a funeral home is a member of the public reading
+ * it, and requiring an account would suppress exactly that.
+ */
+router.post("/reviews/:id/report", reportLimiter, optionalAuth, async (req, res) => {
+  const reason = asEnum(req.body?.reason, REVIEW_REPORT_REASONS, { field: "reason", required: true });
+  const details = asString(req.body?.details, { field: "details", max: LIMITS.message, allowEmpty: true });
+
+  const { data: review, error: findError } = await supabase
+    .from("reviews")
+    .select("id")
+    .eq("id", req.params.id)
+    .eq("status", "published")
+    .maybeSingle();
+  if (findError || !review) return res.status(404).json({ error: "Review not found." });
+
+  const { error } = await supabase.from("review_reports").insert({
+    review_id: review.id,
+    reporter_id: req.user?.id || null,
+    reason,
+    details: details || "",
+  });
+  if (error) return res.status(500).json({ error: "Couldn't submit that report." });
+
+  // Deliberately says nothing about what happens next: a reporter learning the
+  // outcome would tell them whether the review was judged fake, which is not
+  // theirs to know.
+  res.status(201).json({ ok: true });
+});
 
 /**
  * Organization names, for the "which organization do you work for?" picker on
@@ -123,11 +305,16 @@ router.get("/search", searchLimiter, async (req, res) => {
     .sort((a, b) => (a.distanceMiles ?? 999) - (b.distanceMiles ?? 999));
 
   const page = serialized.slice(0, MAX_SEARCH_RESULTS);
+
+  // Ratings are attached after paging, so the stats query is bounded by what is
+  // actually being returned rather than by everything that matched.
+  const stats = await reviewStatsFor(page.map((r) => r.orgId));
+
   res.json({
     origin,
     count: page.length,
     truncated: serialized.length > page.length,
-    results: page,
+    results: page.map((r) => ({ ...r, rating: ratingSummary(stats.get(r.orgId)) })),
   });
 });
 
@@ -150,7 +337,9 @@ router.get("/offerings/:id", async (req, res) => {
   const found = await findOffering(req.params.id);
   if (!found) return res.status(404).json({ error: "Offering not found." });
   await trackEvent("offer_view", { offeringId: found.offering.id, category: found.offering.category });
-  res.json(serializeOfferingDetail(found));
+
+  const stats = await reviewStatsFor([found.org.id]);
+  res.json({ ...serializeOfferingDetail(found), rating: ratingSummary(stats.get(found.org.id)) });
 });
 
 router.get("/compare", async (req, res) => {

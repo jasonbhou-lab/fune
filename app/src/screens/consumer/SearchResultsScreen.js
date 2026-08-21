@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, ActivityIndicator, ScrollView } from "react-native";
 import { Screen, Chip, Card, Badge, SecondaryButton } from "../../components/ui";
+import { RatingBadge } from "../../components/StarRating";
 import ProviderMap from "../../components/ProviderMap";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
@@ -165,8 +166,9 @@ export default function SearchResultsScreen({ navigation, route }) {
                     <Text style={{ fontWeight: "700", fontSize: 14, flex: 1 }}>{item.providerName}</Text>
                     <Text style={type.caption}>{item.distanceMiles} mi</Text>
                   </View>
-                  <View style={{ marginTop: 4, marginBottom: 4 }}>
+                  <View style={{ marginTop: 4, marginBottom: 4, flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
                     <Badge label={item.verified ? "Verified" : "Unverified"} tone={item.verified ? "ok" : "warn"} />
+                    <RatingBadge rating={item.rating} size={13} />
                   </View>
                   <Text style={{ fontSize: 13 }}>
                     {item.name} — <Text style={{ fontWeight: "700" }}>{item.price.text}</Text>

@@ -48,6 +48,18 @@ export const reportLimiter = rateLimit({
   message: tooMany,
 });
 
+/**
+ * Writing and editing reviews. Tighter than leads because a review is public
+ * content attached to a named business, so scripted posting is a reputation
+ * attack rather than just noise. One person legitimately writes very few.
+ */
+export const reviewLimiter = rateLimit({
+  ...common,
+  windowMs: 60 * 60 * 1000,
+  limit: 15,
+  message: { error: "Too many review submissions from this connection. Try again later." },
+});
+
 /** Authenticated bulk operations that are expensive per call. */
 export const bulkLimiter = rateLimit({
   ...common,

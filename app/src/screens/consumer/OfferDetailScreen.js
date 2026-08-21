@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, ActivityIndicator, Pressable } from "react-native";
 import { Screen, Card, Badge, Banner, Chip, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
+import { RatingBadge } from "../../components/StarRating";
+import ReviewsSection from "../../components/ReviewsSection";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -110,6 +112,7 @@ export default function OfferDetailScreen({ navigation, route }) {
           </Pressable>
         </View>
         <Text style={[type.h2, { marginTop: 8 }]}>{offering.location.orgName}</Text>
+        <RatingBadge rating={offering.rating} style={{ marginTop: 4, marginBottom: 2 }} />
         <Text style={type.caption}>
           {offering.location.address} · {offering.location.city}, {offering.location.state}
         </Text>
@@ -174,6 +177,20 @@ export default function OfferDetailScreen({ navigation, route }) {
             <PrimaryButton title="Submit report" onPress={submitReport} loading={reportSaving} />
           </Card>
         )}
+
+        {/* Reviews are of the business, not of this one price, so they key off
+            the organization rather than the offering. */}
+        <ReviewsSection
+          orgId={offering.location.orgId}
+          orgName={offering.location.orgName}
+          onWriteReview={(existing) =>
+            navigation.navigate("WriteReview", {
+              orgId: offering.location.orgId,
+              orgName: offering.location.orgName,
+              existing,
+            })
+          }
+        />
       </ScrollView>
     </Screen>
   );
