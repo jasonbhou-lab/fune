@@ -5,16 +5,67 @@ import { GOOGLE_MAPS_WEB_API_KEY } from "../config";
 
 const MAP_HEIGHT = 320;
 
+// The Maps API signals readiness through a global callback named in the script
+// URL. script.onload is NOT that signal: with loading=async the bootstrap
+// script returns immediately and finishes initialising later, so at onload
+// `window.google.maps` already exists while `window.google.maps.Map` is still
+// undefined. Constructing the map there threw "google.maps.Map is not a
+// constructor" inside a promise chain whose only visible effect was an empty
+// grey box — which is why the map appeared to be a key or CSP problem.
+const READY_CALLBACK = "__glpGoogleMapsReady";
+const LOAD_TIMEOUT_MS = 15000;
+
+// Auth failures are reported by the API asynchronously and usually *after* the
+// ready callback has fired, so they can't be surfaced by rejecting the load
+// promise. Fan them out to whatever maps are mounted instead.
+let authFailure = null;
+const authFailureListeners = new Set();
+
+function reportAuthFailure() {
+  authFailure =
+    "Google Maps rejected the API key. Check that the Maps JavaScript API is enabled, " +
+    "billing is active, and this site's origin is allowed by the key's restrictions.";
+  authFailureListeners.forEach((notify) => notify(authFailure));
+}
+
 let loaderPromise = null;
 function loadGoogleMaps() {
-  if (typeof window !== "undefined" && window.google?.maps) return Promise.resolve(window.google.maps);
+  if (typeof window === "undefined") return Promise.reject(new Error("No browser environment."));
+  // Check for Map, not just maps: see the partially-initialised state above.
+  if (window.google?.maps?.Map) return Promise.resolve(window.google.maps);
   if (loaderPromise) return loaderPromise;
+
   loaderPromise = new Promise((resolve, reject) => {
+    const fail = (message) => {
+      // Drop the cached promise so remounting retries rather than replaying a
+      // stale failure forever.
+      loaderPromise = null;
+      reject(new Error(message));
+    };
+
+    const timer = setTimeout(
+      () => fail("Google Maps did not finish loading. Check the network connection and the API key."),
+      LOAD_TIMEOUT_MS
+    );
+
+    window[READY_CALLBACK] = () => {
+      clearTimeout(timer);
+      delete window[READY_CALLBACK];
+      resolve(window.google.maps);
+    };
+
+    window.gm_authFailure = reportAuthFailure;
+
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_WEB_API_KEY}&loading=async`;
+    script.src =
+      "https://maps.googleapis.com/maps/api/js" +
+      `?key=${encodeURIComponent(GOOGLE_MAPS_WEB_API_KEY)}` +
+      `&loading=async&callback=${READY_CALLBACK}`;
     script.async = true;
-    script.onload = () => resolve(window.google.maps);
-    script.onerror = () => reject(new Error("Failed to load Google Maps JavaScript API."));
+    script.onerror = () => {
+      clearTimeout(timer);
+      fail("Failed to load the Google Maps JavaScript API.");
+    };
     document.head.appendChild(script);
   });
   return loaderPromise;
@@ -30,6 +81,14 @@ export default function ProviderMap({ origin, pins, onSelectPin }) {
   const [loadError, setLoadError] = useState(null);
 
   const key = useMemo(() => `${origin.lat},${origin.lng},${pins.map((p) => p.locationId).join("|")}`, [origin, pins]);
+
+  // A rejected key produces a map that loads but renders nothing useful, and
+  // the API only tells us out-of-band, so listen for it explicitly.
+  useEffect(() => {
+    if (authFailure) setLoadError(authFailure);
+    authFailureListeners.add(setLoadError);
+    return () => authFailureListeners.delete(setLoadError);
+  }, []);
 
   useEffect(() => {
     if (!GOOGLE_MAPS_WEB_API_KEY) return;
