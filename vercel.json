@@ -6,6 +6,14 @@
   "framework": null,
   "rewrites": [
     {
+      "source": "/api",
+      "destination": "/api/gateway?__p="
+    },
+    {
+      "source": "/api/((?!gateway$).*)",
+      "destination": "/api/gateway?__p=$1"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
