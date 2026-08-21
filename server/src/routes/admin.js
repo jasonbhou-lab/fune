@@ -64,6 +64,130 @@ router.patch("/orgs/:id/verify", async (req, res) => {
   res.json(updated);
 });
 
+// Provider roles an approver may assign. 'owner' is included because whoever
+// registers an organization that isn't listed yet becomes its first owner.
+const PROVIDER_ROLES = ["owner", "administrator", "lead_manager"];
+
+const CLAIM_COLUMNS =
+  "id, name, email, requestedOrgId:requested_org_id, requestedOrgName:requested_org_name, status:org_claim_status, createdAt:created_at";
+
+/**
+ * Provider accounts waiting to be attached to an organization.
+ *
+ * Approving one is the only path from "claims to work at X" to actually reading
+ * X's leads, so it is deliberately a human decision. Verify employment out of
+ * band before approving — the claim itself is just something the person typed.
+ */
+router.get("/org-claims", async (_req, res) => {
+  const { data: claims, error } = await supabase
+    .from("profiles")
+    .select(CLAIM_COLUMNS)
+    .eq("role", "provider")
+    .eq("org_claim_status", "pending")
+    .is("org_id", null)
+    .order("created_at")
+    .limit(MAX_ROWS);
+  if (error) return res.status(500).json({ error: "Couldn't load organization claims." });
+
+  // Resolve the claimed organization's name for the ones naming an existing org.
+  const orgIds = [...new Set((claims || []).map((c) => c.requestedOrgId).filter(Boolean))];
+  let orgsById = new Map();
+  if (orgIds.length > 0) {
+    const { data: orgs } = await supabase.from("orgs").select(ORG_COLUMNS).in("id", orgIds);
+    orgsById = new Map((orgs || []).map((o) => [o.id, o]));
+  }
+
+  res.json(
+    (claims || []).map((c) => ({
+      ...c,
+      // Either an organization already on the platform, or one to be created.
+      claimedOrg: c.requestedOrgId ? orgsById.get(c.requestedOrgId) || null : null,
+      isNewOrg: !c.requestedOrgId,
+    }))
+  );
+});
+
+router.post("/org-claims/:profileId/approve", async (req, res) => {
+  const providerRole = asEnum(req.body?.providerRole, PROVIDER_ROLES, {
+    field: "providerRole",
+    required: false,
+  });
+
+  const { data: profile, error: findError } = await supabase
+    .from("profiles")
+    .select(CLAIM_COLUMNS + ", orgId:org_id")
+    .eq("id", req.params.profileId)
+    .maybeSingle();
+  if (findError || !profile) return res.status(404).json({ error: "Claim not found." });
+  if (profile.status !== "pending" || profile.orgId) {
+    return res.status(409).json({ error: "That claim is no longer pending." });
+  }
+
+  let orgId = profile.requestedOrgId;
+  let createdOrg = false;
+
+  if (!orgId) {
+    // A claim on an organization that isn't listed yet. Create it unverified —
+    // verification is a separate decision, made on the Organizations screen.
+    const name = asString(profile.requestedOrgName, { field: "requestedOrgName", max: LIMITS.shortText, required: true });
+    const { data: org, error: createError } = await supabase.from("orgs").insert({ name }).select(ORG_COLUMNS).single();
+    if (createError) return res.status(500).json({ error: "Couldn't create the organization." });
+    orgId = org.id;
+    createdOrg = true;
+  }
+
+  const { data: updated, error } = await supabase
+    .from("profiles")
+    .update({
+      org_id: orgId,
+      // First member of a brand new organization owns it; anyone joining an
+      // existing one gets the least-privileged role unless told otherwise.
+      provider_role: providerRole || (createdOrg ? "owner" : "lead_manager"),
+      org_claim_status: "none",
+      requested_org_id: null,
+      requested_org_name: null,
+    })
+    .eq("id", req.params.profileId)
+    .eq("org_claim_status", "pending")
+    .select(CLAIM_COLUMNS + ", orgId:org_id, providerRole:provider_role")
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't approve the claim." });
+  if (!updated) return res.status(409).json({ error: "That claim is no longer pending." });
+
+  await appendAudit({
+    actor: req.user.name,
+    action: "org_claim_approved",
+    entity: req.params.profileId,
+    from: createdOrg ? `new org "${profile.requestedOrgName}"` : `org ${profile.requestedOrgId}`,
+    to: `${orgId} as ${updated.providerRole}`,
+  });
+
+  res.json(updated);
+});
+
+router.post("/org-claims/:profileId/reject", async (req, res) => {
+  const { data: updated, error } = await supabase
+    .from("profiles")
+    .update({ org_claim_status: "rejected", requested_org_id: null, requested_org_name: null })
+    .eq("id", req.params.profileId)
+    .eq("org_claim_status", "pending")
+    .is("org_id", null)
+    .select(CLAIM_COLUMNS)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: "Couldn't reject the claim." });
+  if (!updated) return res.status(409).json({ error: "That claim is no longer pending." });
+
+  await appendAudit({
+    actor: req.user.name,
+    action: "org_claim_rejected",
+    entity: req.params.profileId,
+    from: "pending",
+    to: "rejected",
+  });
+
+  res.json(updated);
+});
+
 router.get("/offerings", async (req, res) => {
   const statusFilter = asEnum(req.query.status, OFFERING_STATUSES, { field: "Status" });
   let query = supabase.from("offerings").select(`${OFFERING_COLUMNS}, location:locations(name, org:orgs(name))`);

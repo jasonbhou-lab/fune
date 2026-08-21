@@ -18,6 +18,7 @@ import SavedScreen from "../screens/consumer/SavedScreen";
 import HistoryScreen from "../screens/consumer/HistoryScreen";
 import AccountScreen from "../screens/consumer/AccountScreen";
 import SignInScreen from "../screens/consumer/SignInScreen";
+import ChooseRoleScreen from "../screens/consumer/ChooseRoleScreen";
 import CommPrefsScreen from "../screens/consumer/CommPrefsScreen";
 
 import PortalHomeScreen from "../screens/portal/PortalHomeScreen";
@@ -106,7 +107,7 @@ function MainTabs() {
 }
 
 export default function RootNavigator() {
-  const { session, role, authLoading, passwordRecovery } = useAppState();
+  const { session, role, rolePending, authLoading, passwordRecovery } = useAppState();
 
   if (authLoading) {
     return (
@@ -132,6 +133,11 @@ export default function RootNavigator() {
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!signedIn ? (
           <RootStack.Screen name="SignIn" component={SignInScreen} />
+        ) : rolePending ? (
+          // Signed in, but the account type was never asked for — every Google
+          // signup. Routing on the fallback role would drop a funeral home into
+          // the consumer app with no way back, so ask before going anywhere.
+          <RootStack.Screen name="ChooseRole" component={ChooseRoleScreen} />
         ) : role === "platform_admin" ? (
           <RootStack.Screen name="AdminHome" component={AdminHomeScreen} />
         ) : role === "provider" ? (

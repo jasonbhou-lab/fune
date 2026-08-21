@@ -91,10 +91,28 @@ export default function PortalHomeScreen({ navigation }) {
             and no leads, with nothing explaining why. */}
         {!providerUser?.orgId ? (
           <>
-            <Text style={[type.h3, { marginBottom: spacing.sm }]}>Account pending setup</Text>
+            <Text style={[type.h3, { marginBottom: spacing.sm }]}>
+              {providerUser?.orgClaimStatus === "pending"
+                ? "Waiting for approval"
+                : providerUser?.orgClaimStatus === "rejected"
+                  ? "Request declined"
+                  : "Account pending setup"}
+            </Text>
             <Text style={{ color: colors.muted, lineHeight: 20 }}>
-              Your provider account isn't linked to an organization yet, so there are no locations, listings, or leads to
-              show. A platform administrator needs to connect it to your funeral home before the portal becomes useful.
+              {providerUser?.orgClaimStatus === "pending" ? (
+                <>
+                  You asked to join{" "}
+                  <Text style={{ fontWeight: "700", color: colors.ink }}>
+                    {providerUser.orgName || providerUser.requestedOrgName || "an organization"}
+                  </Text>
+                  . A platform administrator has to confirm you work there before your account is connected, because the
+                  portal shows families' enquiries and contact details. You'll get access as soon as it's approved.
+                </>
+              ) : providerUser?.orgClaimStatus === "rejected" ? (
+                "Your request to join an organization wasn't approved. If you believe that's a mistake, contact us and we'll take another look."
+              ) : (
+                "Your provider account isn't linked to an organization yet, so there are no locations, listings, or leads to show. A platform administrator needs to connect it to your funeral home before the portal becomes useful."
+              )}
             </Text>
             <Text style={[type.caption, { marginTop: spacing.md }]}>
               Signed in as {providerUser?.email || "this account"}.

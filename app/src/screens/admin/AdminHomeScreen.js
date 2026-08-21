@@ -4,6 +4,7 @@ import { useAppState } from "../../context/AppState";
 import { colors, spacing } from "../../theme";
 import { useContentWidth } from "../../responsive";
 import AdminOrganizations from "./AdminOrganizations";
+import AdminOrgClaims from "./AdminOrgClaims";
 import AdminModeration from "./AdminModeration";
 import AdminTaxonomy from "./AdminTaxonomy";
 import AdminReports from "./AdminReports";
@@ -12,6 +13,7 @@ import AdminAnalytics from "./AdminAnalytics";
 
 const NAV = [
   { id: "orgs", label: "Organizations" },
+  { id: "claims", label: "Requests" },
   { id: "moderation", label: "Moderation" },
   { id: "taxonomy", label: "Taxonomy" },
   { id: "reports", label: "Reports" },
@@ -65,6 +67,7 @@ export default function AdminHomeScreen({ navigation }) {
         ]}
       >
         {view === "orgs" && <AdminOrganizations token={adminToken} />}
+        {view === "claims" && <AdminOrgClaims token={adminToken} />}
         {view === "moderation" && <AdminModeration token={adminToken} />}
         {view === "taxonomy" && <AdminTaxonomy token={adminToken} />}
         {view === "reports" && <AdminReports token={adminToken} />}

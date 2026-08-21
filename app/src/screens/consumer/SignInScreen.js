@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SvgXml } from "react-native-svg";
-import { TextField, PrimaryButton, Banner } from "../../components/ui";
+import { TextField, PrimaryButton, Banner, Card } from "../../components/ui";
 import GoogleSignInButton from "../../components/GoogleSignInButton";
+import OrgPicker from "../../components/OrgPicker";
 import { useAppState, SELF_SERVICE_ACCOUNT_TYPES } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 import { useContentWidth } from "../../responsive";
@@ -12,6 +13,10 @@ import { useContentWidth } from "../../responsive";
 // Requiring a little more here gives a clear message before the round trip.
 const MIN_PASSWORD_LENGTH = 8;
 
+// Matches Supabase's default one-email-per-minute limit, so the button is only
+// tappable when a resend can actually succeed.
+const RESEND_COOLDOWN_SECONDS = 60;
+
 // The single entry point for every role.
 //
 // There used to be three: this gate for consumers, plus separate "Provider
@@ -19,11 +24,12 @@ const MIN_PASSWORD_LENGTH = 8;
 // the bottom. Now one email/password pair serves all three, the account's role
 // comes from its profile, and RootNavigator sends them to the matching area.
 //
-// mode: signup | login | forgot | reset | mfa | mfaEnroll
+// mode: signup | confirm | login | forgot | reset | mfa | mfaEnroll
 export default function SignInScreen() {
   const {
     login,
     signup,
+    resendConfirmation,
     googleAuth,
     verifyMfa,
     enrollMfa,
@@ -38,7 +44,12 @@ export default function SignInScreen() {
   const contentWidth = useContentWidth();
 
   const [mode, setMode] = useState("signup");
-  const [accountType, setAccountType] = useState(SELF_SERVICE_ACCOUNT_TYPES[0].id);
+  // Starts unset on purpose. Defaulting to the first option meant anyone who
+  // skipped past the question silently became a consumer, and the account type
+  // decides which half of the product they get for good — a provider who lands
+  // in the consumer app has no way to fix it from the UI. Nothing is preselected
+  // and submitting without an answer is refused.
+  const [accountType, setAccountType] = useState(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,6 +60,19 @@ export default function SignInScreen() {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
+  // The address a confirmation email just went to. Held separately from `email`
+  // so the confirm screen keeps naming the right address even if the field is
+  // edited afterwards.
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [resendIn, setResendIn] = useState(0);
+  // { orgId, orgName } — only collected for providers. See OrgPicker.
+  const [orgClaim, setOrgClaim] = useState(null);
+
+  useEffect(() => {
+    if (resendIn <= 0) return undefined;
+    const timer = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
 
   useEffect(() => {
     if (passwordRecovery) {
@@ -82,6 +106,7 @@ export default function SignInScreen() {
 
   const submit = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     try {
       if (mode === "login") {
@@ -100,11 +125,34 @@ export default function SignInScreen() {
           setMode("mfaEnroll");
         }
       } else {
+        // Checked before the password so the first thing on the form is also the
+        // first thing complained about.
+        if (!accountType) {
+          setError("Choose which describes you before creating an account.");
+          return;
+        }
+        // A provider account with no organization can do nothing in the portal,
+        // so the claim is required rather than optional.
+        if (accountType === "provider" && !orgClaim?.orgId && !orgClaim?.orgName) {
+          setError("Choose your organization, or enter its name if it isn't listed.");
+          return;
+        }
         if (password.length < MIN_PASSWORD_LENGTH) {
           setError(`Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.`);
           return;
         }
-        await signup(name.trim(), email.trim(), password, accountType);
+        const address = email.trim();
+        const result = await signup(name.trim(), address, password, accountType, orgClaim);
+        // No session means the account exists but has to be confirmed by email
+        // before it can sign in, so the navigator will not move. Hand over to a
+        // screen dedicated to explaining that, rather than a banner above a form
+        // that now looks like it did nothing.
+        if (result?.confirmationRequired) {
+          setPendingEmail(address);
+          setPassword("");
+          setResendIn(RESEND_COOLDOWN_SECONDS);
+          setMode("confirm");
+        }
       }
     } catch (e) {
       setError(e.message);
@@ -131,6 +179,21 @@ export default function SignInScreen() {
     try {
       await verifyMfa(enrollment.factorId, code.trim());
       await completeMfaEnrollment();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendConfirmationEmail = async () => {
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    try {
+      await resendConfirmation(pendingEmail);
+      setNotice(`Sent again to ${pendingEmail}. Give it a minute to arrive.`);
+      setResendIn(RESEND_COOLDOWN_SECONDS);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -192,9 +255,14 @@ export default function SignInScreen() {
   const onGradientMuted = { color: "rgba(255,255,255,0.8)" };
   const fieldLabelColor = "rgba(255,255,255,0.85)";
 
+  // True only once they've tried to submit without answering, so the question
+  // isn't already flagged red the first time they see it.
+  const accountTypeMissing = mode === "signup" && !accountType && Boolean(error);
+
   const heading = {
     login: "Sign in",
     signup: "Create an account",
+    confirm: "Check your email",
     forgot: "Reset your password",
     reset: "Choose a new password",
     mfa: "Verify it's you",
@@ -214,7 +282,68 @@ export default function SignInScreen() {
         {error ? <Banner tone="danger">{error}</Banner> : null}
         {notice ? <Banner tone="warn">{notice}</Banner> : null}
 
-        {mode === "mfaEnroll" ? (
+        {mode === "confirm" ? (
+          <>
+            <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.md, fontSize: 13, lineHeight: 19 }]}>
+              Your account is created, but it stays locked until you confirm the address it's registered to. That keeps
+              anyone from signing up with an email they don't own.
+            </Text>
+
+            <Card style={{ marginBottom: spacing.md }}>
+              <Text style={type.label}>Confirmation sent to</Text>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: colors.ink, marginTop: 4, marginBottom: spacing.md }}>
+                {pendingEmail}
+              </Text>
+
+              <Text style={type.label}>What to do next</Text>
+              <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
+                {[
+                  "Open the email from us. It usually arrives within a minute.",
+                  "Tap the confirmation link inside it.",
+                  "That link brings you straight back here, already signed in.",
+                ].map((step, i) => (
+                  <View key={i} style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <View
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 10,
+                        backgroundColor: colors.primary,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Text style={{ color: colors.primaryInk, fontSize: 11, fontWeight: "700" }}>{i + 1}</Text>
+                    </View>
+                    <Text style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 19, color: colors.muted }}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <Text style={{ fontSize: 12, lineHeight: 17, color: colors.faint, marginTop: spacing.md }}>
+                Nothing there? Check your spam or junk folder before resending — that's where it lands most often.
+              </Text>
+            </Card>
+
+            <PrimaryButton
+              title={resendIn > 0 ? `Resend email (${resendIn}s)` : "Resend confirmation email"}
+              onPress={resendConfirmationEmail}
+              disabled={resendIn > 0}
+              loading={loading}
+              style={{ backgroundColor: colors.ink }}
+            />
+
+            <Pressable onPress={() => go("login")} style={{ marginTop: spacing.lg }}>
+              <Text style={[onGradient, { textAlign: "center", fontWeight: "700" }]}>I've confirmed — sign in</Text>
+            </Pressable>
+            <Pressable onPress={() => go("signup")} style={{ marginTop: spacing.md }}>
+              <Text style={[onGradientMuted, { textAlign: "center", fontSize: 12 }]}>
+                Wrong address? Start over with a different one
+              </Text>
+            </Pressable>
+          </>
+        ) : mode === "mfaEnroll" ? (
           <>
             <Text style={[type.caption, onGradientMuted, { marginBottom: spacing.lg }]}>
               This account's role requires it. Scan this code with an authenticator app (Google Authenticator, Authy,
@@ -299,16 +428,31 @@ export default function SignInScreen() {
                     future sign-in. Only the two self-service roles appear;
                     platform admins are provisioned directly, and the database
                     whitelist ignores any other value that reaches it. */}
-                <Text style={[type.label, onGradientMuted, { marginBottom: spacing.sm }]}>Which describes you?</Text>
+                <Text style={[type.label, onGradientMuted, { marginBottom: spacing.sm }]}>
+                  Which describes you? (required)
+                </Text>
                 {SELF_SERVICE_ACCOUNT_TYPES.map((opt) => {
                   const active = accountType === opt.id;
                   return (
                     <Pressable
                       key={opt.id}
-                      onPress={() => setAccountType(opt.id)}
+                      onPress={() => {
+                        setAccountType(opt.id);
+                        // Switching away from provider drops any org claim, so a
+                        // consumer signup can't carry one along.
+                        if (opt.id !== "provider") setOrgClaim(null);
+                        // Clear the "choose one" complaint the moment it's answered.
+                        if (!accountType) setError(null);
+                      }}
                       style={{
-                        borderWidth: 1,
-                        borderColor: active ? colors.primaryInk : "rgba(255,255,255,0.45)",
+                        // Thicker and tinted to match the error banner above, so
+                        // the eye is drawn to the thing that needs answering.
+                        borderWidth: accountTypeMissing ? 2 : 1,
+                        borderColor: active
+                          ? colors.primaryInk
+                          : accountTypeMissing
+                            ? colors.dangerSoft
+                            : "rgba(255,255,255,0.45)",
                         backgroundColor: active ? "rgba(255,255,255,0.18)" : "transparent",
                         borderRadius: 10,
                         padding: 12,
@@ -323,6 +467,17 @@ export default function SignInScreen() {
                   );
                 })}
                 <View style={{ marginBottom: spacing.md }} />
+                {accountType === "provider" ? (
+                  <OrgPicker
+                    value={orgClaim}
+                    onChange={(next) => {
+                      setOrgClaim(next);
+                      setError(null);
+                    }}
+                    labelColor={fieldLabelColor}
+                    onGradientMuted={onGradientMuted}
+                  />
+                ) : null}
                 <TextField label="Name" value={name} onChangeText={setName} labelColor={fieldLabelColor} />
               </>
             ) : null}
@@ -350,8 +505,11 @@ export default function SignInScreen() {
             </View>
             <GoogleSignInButton onPress={handleGoogleSignIn} />
             {mode === "signup" ? (
+              // Used to read "creates a consumer account", which stopped being
+              // true once Google signups started being asked the same questions
+              // on ChooseRoleScreen.
               <Text style={[type.caption, onGradientMuted, { marginTop: spacing.sm, textAlign: "center" }]}>
-                Google sign-up creates a consumer account.
+                We'll ask which of these you are after you sign in with Google.
               </Text>
             ) : null}
           </>

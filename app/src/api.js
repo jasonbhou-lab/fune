@@ -61,6 +61,9 @@ async function request(path, { method = "GET", body, token } = {}) {
 }
 
 export const api = {
+  // Public — used by the provider signup form before an account exists.
+  orgDirectory: (q) => request(`/orgs/directory${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+
   // Consumer
   categories: () => request("/categories"),
   search: (params) => request(`/search?${new URLSearchParams(params).toString()}`),
@@ -103,6 +106,10 @@ export const api = {
   adminDeleteCategory: (token, id) => request(`/admin/taxonomy/${id}`, { method: "DELETE", token }),
   adminReports: (token, status) => request(`/admin/reports${status ? `?status=${status}` : ""}`, { token }),
   adminSetReportStatus: (token, id, status) => request(`/admin/reports/${id}`, { method: "PATCH", body: { status }, token }),
+  adminOrgClaims: (token) => request("/admin/org-claims", { token }),
+  adminApproveOrgClaim: (token, profileId, providerRole) =>
+    request(`/admin/org-claims/${profileId}/approve`, { method: "POST", body: { providerRole }, token }),
+  adminRejectOrgClaim: (token, profileId) => request(`/admin/org-claims/${profileId}/reject`, { method: "POST", token }),
   adminAuditLog: (token) => request("/admin/audit-log", { token }),
   adminFunnel: (token) => request("/admin/analytics/funnel", { token }),
   adminTopCategories: (token) => request("/admin/analytics/top-categories", { token }),

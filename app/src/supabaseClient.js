@@ -32,15 +32,37 @@ export const supabaseAuth = createClient(url, key, {
   },
 });
 
+// Two foreign keys point at orgs — the organization the profile belongs to, and
+// the one it has merely asked to join — so both joins have to name their
+// constraint or PostgREST can't tell which relationship is meant.
+const PROFILE_COLUMNS = [
+  "id",
+  "role",
+  "name",
+  "email",
+  "orgId:org_id",
+  "providerRole:provider_role",
+  "rolePending:role_pending",
+  "orgClaimStatus:org_claim_status",
+  "requestedOrgId:requested_org_id",
+  "requestedOrgName:requested_org_name",
+  "requestUpdates:request_updates",
+  "planningResources:planning_resources",
+  "providerOffers:provider_offers",
+  "doNotContact:do_not_contact",
+  "org:orgs!profiles_org_id_fkey(name)",
+  "requestedOrg:orgs!profiles_requested_org_id_fkey(name)",
+].join(", ");
+
 export async function fetchProfile(client, userId) {
-  const { data, error } = await client
-    .from("profiles")
-    .select(
-      "id, role, name, email, orgId:org_id, providerRole:provider_role, requestUpdates:request_updates, planningResources:planning_resources, providerOffers:provider_offers, doNotContact:do_not_contact, org:orgs(name)"
-    )
-    .eq("id", userId)
-    .maybeSingle();
+  const { data, error } = await client.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle();
   if (error || !data) return null;
-  const { org, ...profile } = data;
-  return { ...profile, orgName: org?.name || null };
+  const { org, requestedOrg, ...profile } = data;
+  return {
+    ...profile,
+    orgName: org?.name || null,
+    // For a claim on an existing organization this is its real name; for a claim
+    // on one that isn't listed yet, the free-text name the person typed.
+    requestedOrgName: requestedOrg?.name || profile.requestedOrgName || null,
+  };
 }

@@ -34,6 +34,38 @@ const CONTACT_METHODS = ["call", "text", "email", "no_preference"];
 const NEED_TYPES = ["immediate_need", "planning_ahead", "research"];
 const REPORT_REASONS = ["price_seems_wrong", "listing_outdated", "other"];
 
+// How many organizations the signup picker will list at once.
+const MAX_ORG_DIRECTORY = 50;
+
+/**
+ * Organization names, for the "which organization do you work for?" picker on
+ * the provider signup form.
+ *
+ * Unauthenticated by necessity: it is used before the account exists. That is
+ * acceptable because it returns only what the public search results already
+ * show — an organization's name and whether it is verified — and nothing that
+ * depends on being a member. It is rate limited like search, and the response
+ * is capped, so it cannot be used to walk the whole table cheaply.
+ *
+ * Selecting from this list does NOT grant access to the organization; it records
+ * a claim for a platform admin to approve. See handle_new_user() and
+ * claim_account_type() in supabase/schema.sql.
+ */
+router.get("/orgs/directory", searchLimiter, async (req, res) => {
+  const q = asString(req.query.q, { field: "q", max: LIMITS.query, allowEmpty: true });
+
+  let query = supabase.from("orgs").select("id, name, verified").order("name").limit(MAX_ORG_DIRECTORY);
+  if (q) {
+    // Escape the LIKE metacharacters so a query of "%" doesn't turn into
+    // "match everything" and a literal underscore stays literal.
+    query = query.ilike("name", `%${q.replace(/([\\%_])/g, "\\$1")}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: "Couldn't load organizations." });
+  res.json(data);
+});
+
 router.get("/categories", async (_req, res) => {
   const { data, error } = await supabase.from("taxonomy").select("id, label, examples");
   if (error) return res.status(500).json({ error: "Couldn't load categories." });

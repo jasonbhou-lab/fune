@@ -2,7 +2,13 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import { Linking, Platform } from "react-native";
 import { DEFAULT_FILTERS } from "../attributes";
 import { supabaseAuth, fetchProfile } from "../supabaseClient";
-import { buildPasswordResetRedirectUrl, parseAuthParamsFromUrl, isPasswordRecoveryUrl, describeAuthError } from "../deepLink";
+import {
+  buildPasswordResetRedirectUrl,
+  buildEmailConfirmationRedirectUrl,
+  parseAuthParamsFromUrl,
+  isPasswordRecoveryUrl,
+  describeAuthError,
+} from "../deepLink";
 
 const AppStateContext = createContext(null);
 
@@ -46,12 +52,28 @@ export function AppStateProvider({ children }) {
     setToast({ message, tone, key: Date.now() });
   };
 
+  /**
+   * Read the profile for a user id, tolerating the trigger's lag.
+   *
+   * The row is created database-side by handle_new_user(), which can land a
+   * moment after signUp returns, so a single empty read is not proof that the
+   * profile is absent.
+   */
+  const loadProfile = async (userId) => {
+    let profile = await fetchProfile(supabaseAuth, userId);
+    if (!profile) {
+      await new Promise((r) => setTimeout(r, 500));
+      profile = await fetchProfile(supabaseAuth, userId);
+    }
+    return profile;
+  };
+
   useEffect(() => {
     (async () => {
       const { data } = await supabaseAuth.auth.getSession();
       if (data.session) {
         setSession(data.session);
-        setUser(await fetchProfile(supabaseAuth, data.session.user.id));
+        setUser(await loadProfile(data.session.user.id));
       }
       setAuthLoading(false);
     })();
@@ -66,6 +88,30 @@ export function AppStateProvider({ children }) {
     });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Safety net for a session that shows up after mount without any of the
+  // sign-in functions below having run.
+  //
+  // The mount effect above covers the common cases, including a confirmation or
+  // OAuth link: getSession() waits for detectSessionInUrl internally, so the
+  // URL-delivered session is already installed by the time it resolves (checked
+  // against a build without this effect, which handled that path fine). What it
+  // does not cover is a session arriving later — signing in from another tab, or
+  // any path that only emits an auth event. There, onAuthStateChange stores the
+  // session while `user` stays null, and since the navigator needs a session AND
+  // a role, the user would sit on the sign-in form while already signed in.
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || user?.id === userId) return;
+    let cancelled = false;
+    (async () => {
+      const profile = await loadProfile(userId);
+      if (!cancelled) setUser(profile);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, user?.id]);
 
   /**
    * Turn a recovery deep link into a usable recovery state. Native only — on
@@ -127,6 +173,11 @@ export function AppStateProvider({ children }) {
   const token = session?.access_token || null;
   const role = user?.role || null;
 
+  // Signed in, but the account type was never asked for. Platform admins are
+  // excluded: their role is granted out of band and claim_account_type() would
+  // refuse anyway, so prompting them would be a dead end.
+  const rolePending = Boolean(user?.rolePending) && role !== "platform_admin";
+
   // The rest of the app still asks for "the provider token" or "the admin
   // user". Those now derive from the single session, gated on the profile's
   // role, so every portal and admin screen keeps working untouched — and a
@@ -160,11 +211,18 @@ export function AppStateProvider({ children }) {
       return { mfaRequired: true, factorId: factors?.totp?.[0]?.id || null };
     }
 
-    const profile = await fetchProfile(supabaseAuth, data.user.id);
+    const profile = await loadProfile(data.user.id);
 
     if (profile?.role === "provider" && MFA_REQUIRED_PROVIDER_ROLES.includes(profile.providerRole)) {
       const { data: factors } = await supabaseAuth.auth.mfa.listFactors();
       if (!factors?.totp?.length) return { mfaEnrollmentRequired: true };
+    }
+
+    // The navigator routes on the profile's role, so without one it would keep
+    // showing this form despite a valid session — a stall with nothing on
+    // screen to explain it. Say so instead.
+    if (!profile) {
+      throw new Error("Your account has no profile yet. If you just signed up, confirm your email address first.");
     }
 
     setUser(profile);
@@ -177,22 +235,87 @@ export function AppStateProvider({ children }) {
    * accountType only ever reaches the database as a request: handle_new_user()
    * whitelists it to consumer/provider and ignores anything else, so a tampered
    * client cannot mint a platform admin here.
+   *
+   * Returns { confirmationRequired } so the caller can tell the two outcomes
+   * apart. When the project requires email confirmation, signUp creates the
+   * account but returns no session: nobody is signed in, the profile row is
+   * unreadable under RLS, and the navigator has nothing to route on. Treating
+   * that as success looked identical to failure — the form simply sat there.
    */
-  const signup = async (name, email, password, accountType) => {
+  const signup = async (name, email, password, accountType, orgClaim = null) => {
+    // The organization claim rides along in the same untrusted metadata as the
+    // account type, and handle_new_user() treats it the same way: an id is only
+    // honoured if that organization exists, a name is trimmed and length-checked,
+    // and neither ever sets org_id. It has to travel this way rather than as a
+    // follow-up call, because with email confirmation on there is no session
+    // after signUp to authorize one.
+    const claim =
+      accountType === "provider" && orgClaim
+        ? {
+            ...(orgClaim.orgId ? { requested_org_id: orgClaim.orgId } : {}),
+            ...(!orgClaim.orgId && orgClaim.orgName ? { requested_org_name: orgClaim.orgName } : {}),
+          }
+        : {};
+
     const { data, error } = await supabaseAuth.auth.signUp({
       email,
       password,
-      options: { data: { name, account_type: accountType } },
+      options: {
+        data: { name, account_type: accountType, ...claim },
+        emailRedirectTo: buildEmailConfirmationRedirectUrl(),
+      },
     });
     if (error) throw new Error(error.message);
 
-    // The profile row is created by a database trigger, which can lag the
-    // signUp response by a moment — retry once before giving up.
-    let profile = await fetchProfile(supabaseAuth, data.user.id);
-    if (!profile) {
-      await new Promise((r) => setTimeout(r, 500));
-      profile = await fetchProfile(supabaseAuth, data.user.id);
-    }
+    if (!data.session) return { confirmationRequired: true, profile: null };
+
+    const profile = await loadProfile(data.user.id);
+    setUser(profile);
+    return { confirmationRequired: false, profile };
+  };
+
+  /**
+   * Send the confirmation email again.
+   *
+   * Supabase rate-limits these per project (one per minute by default), and it
+   * refuses outright for an address that is already confirmed. Both come back as
+   * ordinary errors for the caller to show, which is safe here: the person
+   * asking has just been told an email went to this address, so an error about
+   * it reveals nothing they didn't already supply.
+   */
+  const resendConfirmation = async (email) => {
+    const { error } = await supabaseAuth.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: buildEmailConfirmationRedirectUrl() },
+    });
+    if (error) throw new Error(error.message);
+  };
+
+  /**
+   * Answer the account-type question for a signup that never got asked.
+   *
+   * Google sign-in bypasses the signup form, so handle_new_user() has no
+   * account_type to work from and falls back to consumer, flagging the profile
+   * as role_pending. The navigator holds those accounts at a prompt rather than
+   * routing them into the wrong half of the product.
+   *
+   * The write goes through a database function, not a table update: the
+   * authenticated role has no UPDATE grant on profiles.role precisely so a
+   * signed-in user cannot self-promote to platform_admin. claim_account_type()
+   * whitelists the two self-service roles and clears the flag in the same
+   * statement, so it works exactly once.
+   */
+  const claimAccountType = async (accountType, orgClaim = null) => {
+    const { error } = await supabaseAuth.rpc("claim_account_type", {
+      p_account_type: accountType,
+      p_org_id: accountType === "provider" ? orgClaim?.orgId || null : null,
+      p_org_name: accountType === "provider" && !orgClaim?.orgId ? orgClaim?.orgName || null : null,
+    });
+    if (error) throw new Error(error.message);
+
+    const userId = session?.user?.id;
+    const profile = userId ? await loadProfile(userId) : null;
     setUser(profile);
     return profile;
   };
@@ -297,9 +420,12 @@ export function AppStateProvider({ children }) {
       session,
       user,
       role,
+      rolePending,
       authLoading,
       login,
       signup,
+      resendConfirmation,
+      claimAccountType,
       logout,
       googleAuth,
       verifyMfa,
@@ -335,7 +461,7 @@ export function AppStateProvider({ children }) {
       toast,
       showToast,
     }),
-    [location, needType, compareTray, filters, session, user, role, authLoading, passwordRecovery, recoveryError, toast]
+    [location, needType, compareTray, filters, session, user, role, rolePending, authLoading, passwordRecovery, recoveryError, toast]
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

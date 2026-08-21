@@ -92,8 +92,38 @@ create table profiles (
   planning_resources boolean not null default false,
   provider_offers boolean not null default false,
   do_not_contact boolean not null default false,
+  -- True when the account type had to be guessed rather than asked for, which
+  -- is every OAuth signup: Google sign-in never passes through our signup form,
+  -- so no account_type is supplied and the role below is a fallback. The app
+  -- holds these accounts at a role prompt instead of routing them, and
+  -- claim_account_type() is the one-time path to answer it.
+  role_pending boolean not null default false,
+  -- Which organization a self-registered provider SAYS they belong to. This is a
+  -- request, never membership: org_id above is what unlocks an organization's
+  -- leads, and a lead carries a bereaved family's name, phone, email and
+  -- circumstances. Letting signup set org_id directly would let anyone register,
+  -- pick an established funeral home and read its families' contact details, so
+  -- a platform admin approves and only then is org_id written.
+  --
+  -- A pending claim names exactly one of these: an existing organization, or a
+  -- new name to create on approval.
+  requested_org_id uuid references orgs(id) on delete set null,
+  requested_org_name text,
+  org_claim_status text not null default 'none'
+    check (org_claim_status in ('none', 'pending', 'rejected')),
+  constraint profiles_org_claim_shape_check check (
+    org_claim_status <> 'pending'
+    or ((requested_org_id is not null) <> (requested_org_name is not null))
+  ),
+  constraint profiles_requested_org_name_check check (
+    requested_org_name is null or char_length(btrim(requested_org_name)) between 2 and 200
+  ),
   created_at timestamptz not null default now()
 );
+
+create index profiles_org_claim_pending_idx
+  on profiles (org_claim_status)
+  where org_claim_status = 'pending';
 
 -- Create the profile for any new Supabase Auth user (covers email/password
 -- signup and Google OAuth signup, which never goes through our own code).
@@ -112,30 +142,147 @@ create table profiles (
 create function public.handle_new_user()
 returns trigger as $$
 declare
-  requested text := new.raw_user_meta_data->>'account_type';
-  resolved  text;
+  requested   text := new.raw_user_meta_data->>'account_type';
+  req_org_raw text := new.raw_user_meta_data->>'requested_org_id';
+  req_name    text := btrim(coalesce(new.raw_user_meta_data->>'requested_org_name', ''));
+  resolved    text;
+  pending     boolean;
+  claim_org   uuid;
+  claim_name  text;
+  claim_state text := 'none';
 begin
-  resolved := case
-    when requested in ('consumer', 'provider') then requested
-    else 'consumer'
-  end;
+  -- Remember whether we had to guess. Falling back to 'consumer' is the right
+  -- safe default, but silently applying it to every Google signup made them
+  -- consumers for good with no way to say otherwise, so record that the
+  -- question still needs asking.
+  pending  := requested is null or requested not in ('consumer', 'provider');
+  resolved := case when pending then 'consumer' else requested end;
 
-  insert into public.profiles (id, role, name, email)
+  -- An organization claim only means anything for a provider, and it is only
+  -- ever a request. Same rule as the account type: this metadata is supplied by
+  -- whoever called signUp, so an org id is honoured only when it names an
+  -- organization that exists, a free-text name is trimmed and length-checked,
+  -- and neither one ever touches org_id.
+  if resolved = 'provider' then
+    begin
+      claim_org := nullif(req_org_raw, '')::uuid;
+    exception when others then
+      -- Not a uuid. Drop the claim rather than failing the whole signup.
+      claim_org := null;
+    end;
+
+    if claim_org is not null and not exists (select 1 from public.orgs where id = claim_org) then
+      claim_org := null;
+    end if;
+
+    if claim_org is not null then
+      claim_state := 'pending';
+    elsif char_length(req_name) between 2 and 200 then
+      claim_name  := req_name;
+      claim_state := 'pending';
+    end if;
+  end if;
+
+  insert into public.profiles (
+    id, role, name, email, role_pending,
+    requested_org_id, requested_org_name, org_claim_status
+  )
   values (
     new.id,
     resolved,
     coalesce(new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    new.email
+    new.email,
+    pending,
+    claim_org,
+    claim_name,
+    claim_state
   )
   on conflict (id) do nothing;
   return new;
 end;
 $$ language plpgsql security definer set search_path = public;
 
+-- The one-time answer to that question.
+--
+-- `role` is deliberately not writable by the authenticated role (see the column
+-- grants further down), because a signed-in user who could rewrite it would
+-- self-promote to platform_admin. This function is the only self-service path to
+-- setting it, and it is narrow by construction:
+--
+--   * 'platform_admin' is not accepted, so it cannot escalate;
+--   * it only ever touches auth.uid()'s own row;
+--   * it only acts while role_pending is true, and clears the flag in the same
+--     statement, so it cannot be replayed later to flip between roles;
+--   * it refuses to act on a platform_admin row, so an admin promoted after an
+--     OAuth signup cannot be talked into downgrading themselves.
+-- A provider answering here must also name their organization, since a provider
+-- account with no organization can do nothing in the portal. It lands as a
+-- pending claim exactly like the email-signup path above.
+create function public.claim_account_type(
+  p_account_type text,
+  p_org_id uuid default null,
+  p_org_name text default null
+) returns text as $$
+declare
+  resolved    text;
+  uid         uuid := auth.uid();
+  claim_org   uuid := p_org_id;
+  claim_name  text := btrim(coalesce(p_org_name, ''));
+  claim_state text := 'none';
+begin
+  if uid is null then
+    raise exception 'Not signed in.' using errcode = '28000';
+  end if;
+
+  if p_account_type is null or p_account_type not in ('consumer', 'provider') then
+    raise exception 'Choose either consumer or provider.' using errcode = '22023';
+  end if;
+
+  if p_account_type = 'provider' then
+    if claim_org is not null then
+      if not exists (select 1 from public.orgs where id = claim_org) then
+        raise exception 'That organization could not be found.' using errcode = '23503';
+      end if;
+      claim_name  := null;
+      claim_state := 'pending';
+    elsif char_length(claim_name) between 2 and 200 then
+      claim_org   := null;
+      claim_state := 'pending';
+    else
+      raise exception 'Choose your organization, or enter its name.' using errcode = '22023';
+    end if;
+  else
+    claim_org  := null;
+    claim_name := null;
+  end if;
+
+  update public.profiles
+     set role               = p_account_type,
+         role_pending       = false,
+         requested_org_id   = claim_org,
+         requested_org_name = nullif(claim_name, ''),
+         org_claim_status   = claim_state
+   where id = uid
+     and role_pending
+     and role in ('consumer', 'provider')
+  returning role into resolved;
+
+  if resolved is null then
+    raise exception 'This account already has an account type.' using errcode = '42501';
+  end if;
+
+  return resolved;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+revoke execute on function public.claim_account_type(text, uuid, text) from public, anon;
+grant execute on function public.claim_account_type(text, uuid, text) to authenticated;
+
 -- Granting a platform admin, or attaching a self-registered provider to an
 -- organization, is a service_role operation and has no self-service path:
 --
---   update public.profiles set role = 'platform_admin' where email = '...';
+--   update public.profiles set role = 'platform_admin', role_pending = false
+--     where email = '...';
 --   update public.profiles set org_id = '<org uuid>', provider_role = 'owner'
 --     where email = '...';
 --

@@ -30,6 +30,29 @@ export function buildPasswordResetRedirectUrl() {
 }
 
 /**
+ * Where Supabase should send someone after they click the confirmation link in
+ * a signup email.
+ *
+ * Web returns the page origin, so the link lands back on whichever deployment
+ * they actually signed up on rather than whatever the project's Site URL
+ * happens to be. Note the origin still has to appear in the project's allowed
+ * Redirect URLs, or Supabase ignores it and uses Site URL anyway.
+ *
+ * Native deliberately returns undefined rather than glp://. A confirmation link
+ * pointed at the app's own scheme would be handed to the native deep-link
+ * handler, which only understands recovery links, so the session would be
+ * dropped on the floor. Falling back to Site URL means confirmation completes in
+ * a browser and the user then signs in inside the app with their password, which
+ * works today without a new native flow.
+ */
+export function buildEmailConfirmationRedirectUrl() {
+  if (Platform.OS === "web") {
+    return typeof window !== "undefined" ? window.location.origin : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Pull auth parameters out of a URL, whether they arrive in the query string or
  * the fragment.
  *
