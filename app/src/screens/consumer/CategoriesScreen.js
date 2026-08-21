@@ -4,11 +4,13 @@ import { Screen } from "../../components/ui";
 import CategoryIcon from "../../components/CategoryIcon";
 import { api } from "../../api";
 import { colors, spacing } from "../../theme";
+import { useScrollLayout } from "../../responsive";
 
 export default function CategoriesScreen({ navigation }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const layout = useScrollLayout({ padding: spacing.md });
 
   useEffect(() => {
     api
@@ -34,14 +36,18 @@ export default function CategoriesScreen({ navigation }) {
     );
   }
 
+  // Full-bleed scroller with the column constraint on its content, so the
+  // scrollbar lands at the window edge rather than partway across the page.
+  // See useScrollLayout.
   return (
-    <Screen style={{ padding: spacing.md }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <FlatList
         data={categories}
         numColumns={2}
         keyExtractor={(item) => item.id}
+        style={layout.scroller}
         columnWrapperStyle={{ gap: spacing.sm }}
-        contentContainerStyle={{ gap: spacing.sm }}
+        contentContainerStyle={[layout.content, { gap: spacing.sm }]}
         renderItem={({ item }) => (
           <Pressable
             onPress={() => navigation.navigate("Results", { category: item.id })}
@@ -73,6 +79,6 @@ export default function CategoriesScreen({ navigation }) {
           </Pressable>
         )}
       />
-    </Screen>
+    </View>
   );
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
-import { Screen, PrimaryButton, SecondaryButton, CheckboxRow } from "../../components/ui";
+import { Screen, ScrollScreen, PrimaryButton, SecondaryButton, CheckboxRow } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { ATTRIBUTES, activeFilterCount } from "../../attributes";
@@ -17,8 +17,7 @@ export default function FiltersScreen({ navigation }) {
   const count = activeFilterCount(filters);
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+    <ScrollScreen contentStyle={{ flexGrow: 1 }}>
         <Text style={[type.label, { marginBottom: spacing.sm }]}>Service type</Text>
         <Pressable
           onPress={() => setFilters({ category: null })}
@@ -65,8 +64,7 @@ export default function FiltersScreen({ navigation }) {
           <SecondaryButton title="Clear all" onPress={clearFilters} style={{ flex: 1 }} />
           <PrimaryButton title={`Apply${count ? ` (${count})` : ""}`} onPress={() => navigation.goBack()} style={{ flex: 1 }} />
         </View>
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }
 

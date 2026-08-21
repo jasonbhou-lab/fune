@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { View, Text, ScrollView } from "react-native";
-import { Screen, TextField, PrimaryButton, CheckboxRow, Banner } from "../../components/ui";
+import { Screen, ScrollScreen, TextField, PrimaryButton, CheckboxRow, Banner } from "../../components/ui";
 import { Chip } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
@@ -70,8 +70,7 @@ export default function LeadFormScreen({ navigation, route }) {
   };
 
   return (
-    <Screen>
-      <ScrollView keyboardShouldPersistTaps="handled">
+    <ScrollScreen keyboardShouldPersistTaps="handled">
         <Text style={[type.label, { marginBottom: spacing.md }]}>Request pricing · {providerName}</Text>
 
         {serverError ? <Banner tone="danger">Couldn't send your request. {serverError}</Banner> : null}
@@ -109,7 +108,6 @@ export default function LeadFormScreen({ navigation, route }) {
         />
 
         <PrimaryButton title="Send request" onPress={submit} loading={submitting} style={{ marginTop: spacing.md, marginBottom: spacing.xl }} />
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }

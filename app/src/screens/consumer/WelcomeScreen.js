@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
-import { Screen, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
+import { Screen, ScrollScreen, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
@@ -20,8 +20,7 @@ export default function WelcomeScreen({ navigation }) {
   };
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+    <ScrollScreen contentStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
         <Text style={type.display}>GLP</Text>
         <Text style={[type.caption, { marginTop: 4, marginBottom: spacing.xl }]}>Compare with clarity.</Text>
 
@@ -54,7 +53,6 @@ export default function WelcomeScreen({ navigation }) {
         <Text style={[type.caption, { textAlign: "center", marginTop: spacing.md }]}>
           No obligation to contact anyone.
         </Text>
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }

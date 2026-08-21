@@ -5,11 +5,13 @@ import { Screen, Card, Badge } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
+import { useScrollLayout } from "../../responsive";
 
 const STATUS_TONE = { new: "warn", contacted: "ok", quoted: "ok", appointment_scheduled: "ok", converted: "ok", closed_lost: "danger", do_not_contact: "danger" };
 
 export default function HistoryScreen() {
   const { consumerToken } = useAppState();
+  const layout = useScrollLayout({ padding: spacing.lg });
   const [leads, setLeads] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -37,11 +39,12 @@ export default function HistoryScreen() {
   }
 
   return (
-    <Screen>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <FlatList
         data={leads}
         keyExtractor={(l) => l.id}
-        contentContainerStyle={{ gap: spacing.sm }}
+        style={layout.scroller}
+        contentContainerStyle={[layout.content, { gap: spacing.sm }]}
         renderItem={({ item }) => (
           <Card>
             <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
@@ -54,6 +57,6 @@ export default function HistoryScreen() {
           </Card>
         )}
       />
-    </Screen>
+    </View>
   );
 }

@@ -54,3 +54,38 @@ export function useContentWidth() {
     alignSelf: "center",
   };
 }
+
+/**
+ * Styles for a screen whose body is one long scrolling list.
+ *
+ * The important part is which element carries the width constraint. A scrollable
+ * list wrapped in the centered column becomes a scroll box the width of that
+ * column, so its scrollbar sits wherever the column ends: on a 1280pt window
+ * that measured x=944, i.e. 336pt in from the edge of the window. It reads as a
+ * broken frame floating in the middle of the page rather than as the page's own
+ * scrollbar, which is exactly how it was reported.
+ *
+ * So the scroller stays full-bleed and the constraint moves inside it, onto the
+ * content. The scrollbar then lands hard against the window edge — where a
+ * browser scrollbar belongs — while the rows themselves stay centered and
+ * readable.
+ *
+ * Note the document itself still cannot scroll: Expo's web template sets
+ * `body { overflow: hidden }` and the tab bar is fixed app chrome below the
+ * screen, so there has to be a scroll region somewhere. This makes that region
+ * span the full width instead of a column in the middle.
+ *
+ * Returns `scroller` for the ScrollView/FlatList's own `style`, and `content`
+ * for its `contentContainerStyle`.
+ */
+export function useScrollLayout({ padding = 0, constrain = true } = {}) {
+  const contentWidth = useContentWidth();
+  return {
+    scroller: { flex: 1, width: "100%" },
+    // constrain: false for tabular content. The centered column is a reading
+    // measure, right for prose and lists of cards, wrong for a side-by-side
+    // table — squeezing four columns into 640pt is what forced the compare
+    // screen to scroll sideways. Tables get the whole window.
+    content: [{ width: "100%", padding }, constrain ? contentWidth : null],
+  };
+}

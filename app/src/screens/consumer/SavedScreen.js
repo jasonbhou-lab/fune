@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { Screen, Card, Badge, SecondaryButton } from "../../components/ui";
+import { Screen, ScrollScreen, Card, Badge, SecondaryButton } from "../../components/ui";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -56,9 +56,8 @@ export default function SavedScreen({ navigation }) {
   }
 
   return (
-    <Screen>
+    <ScrollScreen>
       <Text style={[type.caption, { marginBottom: spacing.sm }]}>Signed in as {consumerUser?.name}</Text>
-      <ScrollView>
         <Text style={[type.label, { marginBottom: spacing.sm }]}>Saved providers</Text>
         {(saved?.providers || []).length === 0 ? (
           <Text style={[type.caption, { marginBottom: spacing.lg }]}>Nothing saved yet. Tap a provider's ♡ icon while browsing.</Text>
@@ -106,7 +105,6 @@ export default function SavedScreen({ navigation }) {
             </Card>
           ))
         )}
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }

@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, ActivityIndicator, ScrollView } from "react-native";
-import { Screen, Chip, Card, Badge, SecondaryButton } from "../../components/ui";
+import { Chip, Card, Badge, SecondaryButton } from "../../components/ui";
 import { RatingBadge } from "../../components/StarRating";
 import ProviderMap from "../../components/ProviderMap";
 import { api } from "../../api";
 import { useAppState } from "../../context/AppState";
 import { activeFilterCount } from "../../attributes";
 import { colors, spacing, type } from "../../theme";
+import { useContentWidth, useScrollLayout } from "../../responsive";
 
 export default function SearchResultsScreen({ navigation, route }) {
   const { location, compareTray, addToCompare, removeFromCompare, filters, setFilters, clearFilters } = useAppState();
@@ -64,8 +65,17 @@ export default function SearchResultsScreen({ navigation, route }) {
     return [...map.values()];
   }, [results]);
 
+  // The results list is the page's scroll region, so it has to be full-bleed
+  // with the column constraint on its content — see useScrollLayout. The header
+  // stays outside the scroller so it doesn't scroll away, but carries the same
+  // constraint so the two columns line up.
+  const contentWidth = useContentWidth();
+  const layout = useScrollLayout({ padding: spacing.lg });
+  const centered = [{ flex: 1, width: "100%", alignItems: "center", justifyContent: "center", padding: spacing.lg }, contentWidth];
+
   return (
-    <Screen>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <View style={[{ width: "100%", paddingHorizontal: spacing.lg, paddingTop: spacing.lg }, contentWidth]}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
         <Text style={type.h3}>
           {location.city}, {location.state} {location.zip}
@@ -125,19 +135,20 @@ export default function SearchResultsScreen({ navigation, route }) {
           </Text>
         </Pressable>
       ) : null}
+      </View>
 
       {loading ? (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <View style={centered}>
           <ActivityIndicator color={colors.primary} />
           <Text style={[type.caption, { marginTop: spacing.sm }]}>Finding providers near {location.zip}…</Text>
         </View>
       ) : error ? (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <View style={centered}>
           <Text style={{ color: colors.danger, textAlign: "center" }}>{error}</Text>
           <SecondaryButton title="Try again" onPress={runSearch} style={{ marginTop: spacing.md }} />
         </View>
       ) : results.results.length === 0 ? (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+        <View style={centered}>
           <Text style={{ fontWeight: "700", marginBottom: 6 }}>No providers match yet</Text>
           <Text style={[type.caption, { textAlign: "center", marginBottom: spacing.md }]}>
             No published listings near {location.zip} match these filters.
@@ -145,7 +156,7 @@ export default function SearchResultsScreen({ navigation, route }) {
           <SecondaryButton title="Clear filters" onPress={clearFilters} />
         </View>
       ) : viewMode === "map" ? (
-        <ScrollView>
+        <ScrollView style={layout.scroller} contentContainerStyle={layout.content}>
           <ProviderMap
             origin={results.origin}
             pins={pinsByLocation}
@@ -156,7 +167,8 @@ export default function SearchResultsScreen({ navigation, route }) {
         <FlatList
           data={results.results}
           keyExtractor={(item) => item.offeringId}
-          contentContainerStyle={{ gap: spacing.sm }}
+          style={layout.scroller}
+          contentContainerStyle={[layout.content, { gap: spacing.sm }]}
           renderItem={({ item }) => {
             const inTray = compareTray.includes(item.offeringId);
             return (
@@ -191,6 +203,6 @@ export default function SearchResultsScreen({ navigation, route }) {
           }}
         />
       )}
-    </Screen>
+    </View>
   );
 }

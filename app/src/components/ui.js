@@ -1,7 +1,7 @@
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
 import { colors, spacing } from "../theme";
-import { useContentWidth } from "../responsive";
+import { useContentWidth, useScrollLayout } from "../responsive";
 
 // react-navigation's native-stack renders each screen as a viewport-fixed
 // overlay on web (a react-native-screens quirk that ignores any width
@@ -17,6 +17,34 @@ export function Screen({ children, style }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={[{ flex: 1, width: "100%", padding: spacing.lg }, contentWidth, style]}>{children}</View>
+    </View>
+  );
+}
+
+/**
+ * A Screen whose entire body scrolls.
+ *
+ * Use this instead of putting a ScrollView inside <Screen>. Screen constrains
+ * its inner view to the centered column, so a scroller nested in it becomes a
+ * scroll box the width of that column, and its scrollbar sits wherever the
+ * column ends — measured 336pt in from the edge of a 1280pt window, which reads
+ * as a stray frame floating mid-page rather than as the page's scrollbar.
+ *
+ * Here the scroller is full-bleed and the column constraint sits on its content,
+ * so the bar lands against the window edge while the content stays centered.
+ *
+ * Any remaining ScrollView props (keyboardShouldPersistTaps, horizontal
+ * children, and so on) pass straight through.
+ */
+export function ScrollScreen({ children, contentStyle, style, wide = false, ...scrollProps }) {
+  // wide drops the centered reading column, for tabular content that needs the
+  // whole window rather than a comfortable line length.
+  const layout = useScrollLayout({ padding: spacing.lg, constrain: !wide });
+  return (
+    <View style={[{ flex: 1, backgroundColor: colors.bg }, style]}>
+      <ScrollView style={layout.scroller} contentContainerStyle={[layout.content, contentStyle]} {...scrollProps}>
+        {children}
+      </ScrollView>
     </View>
   );
 }

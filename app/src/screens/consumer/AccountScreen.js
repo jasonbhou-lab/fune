@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
-import { Screen, Card } from "../../components/ui";
+import { Screen, ScrollScreen, Card } from "../../components/ui";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
@@ -17,8 +17,7 @@ export default function AccountScreen({ navigation }) {
   const { consumerUser, consumerLogout } = useAppState();
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+    <ScrollScreen contentStyle={{ flexGrow: 1 }}>
       <Text style={[type.h2, { marginBottom: 4 }]}>{consumerUser?.name}</Text>
       <Text style={[type.caption, { marginBottom: spacing.lg }]}>{consumerUser?.email}</Text>
       <Card>
@@ -26,7 +25,6 @@ export default function AccountScreen({ navigation }) {
         <Row label="Sign out" onPress={consumerLogout} />
       </Card>
 
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }

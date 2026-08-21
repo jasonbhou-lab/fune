@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
-import { Screen } from "../../components/ui";
+import { Screen, ScrollScreen } from "../../components/ui";
 import { supabaseAuth } from "../../supabaseClient";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -62,8 +62,7 @@ export default function CommPrefsScreen() {
   ];
 
   return (
-    <Screen>
-      <ScrollView>
+    <ScrollScreen>
       {rows.map((r) => (
         <View key={r.key} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line }}>
           <View style={{ flex: 1, marginRight: spacing.md }}>
@@ -76,7 +75,6 @@ export default function CommPrefsScreen() {
       <Pressable onPress={() => update("doNotContact", true)} style={{ paddingTop: spacing.lg }}>
         <Text style={{ color: colors.danger, fontWeight: "700" }}>Do not contact me</Text>
       </Pressable>
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }

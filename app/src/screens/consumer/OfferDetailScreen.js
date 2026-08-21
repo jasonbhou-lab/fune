@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, ActivityIndicator, Pressable } from "react-native";
-import { Screen, Card, Badge, Banner, Chip, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
+import { Screen, ScrollScreen, Card, Badge, Banner, Chip, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
 import { RatingBadge } from "../../components/StarRating";
 import ReviewsSection from "../../components/ReviewsSection";
 import { api } from "../../api";
@@ -96,8 +96,7 @@ export default function OfferDetailScreen({ navigation, route }) {
   const inTray = compareTray.includes(offering.id);
 
   return (
-    <Screen>
-      <ScrollView>
+    <ScrollScreen>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
           <Badge label={offering.location.verified ? "Verified" : "Unverified"} tone={offering.location.verified ? "ok" : "warn"} />
           <Pressable
@@ -191,7 +190,6 @@ export default function OfferDetailScreen({ navigation, route }) {
             })
           }
         />
-      </ScrollView>
-    </Screen>
+    </ScrollScreen>
   );
 }
