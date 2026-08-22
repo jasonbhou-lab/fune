@@ -88,14 +88,41 @@ router.get("/users", async (req, res) => {
   const q = asString(req.query.q, { field: "q", max: LIMITS.query, allowEmpty: true });
   const role = asEnum(req.query.role, ASSIGNABLE_ROLES, { field: "role" });
 
-  let query = supabase.from("profiles").select(USER_COLUMNS).order("created_at", { ascending: false }).limit(MAX_ROWS);
-  if (role) query = query.eq("role", role);
+  const base = () => {
+    let q2 = supabase.from("profiles").select(USER_COLUMNS).order("created_at", { ascending: false }).limit(MAX_ROWS);
+    if (role) q2 = q2.eq("role", role);
+    return q2;
+  };
+
+  let users;
+  let error;
+
   if (q) {
-    const safe = q.replace(/([\\%_])/g, "\\$1");
-    query = query.or(`name.ilike.%${safe}%,email.ilike.%${safe}%`);
+    // Deliberately two parameterised queries merged here rather than one
+    // .or("name.ilike.%x%,email.ilike.%x%").
+    //
+    // That string is a PostgREST filter GRAMMAR, not a value: commas separate
+    // conditions and parentheses group them, so a search term containing them
+    // injects extra conditions. Verified against the live API — a term of
+    // `x,nosuchcol.eq.1` comes back as `column profiles.nosuchcol does not
+    // exist`, which proves the text was parsed as a filter and also turns 400s
+    // into a column-name oracle. Escaping only the LIKE metacharacters, as this
+    // did, does not touch the grammar characters.
+    //
+    // .ilike(column, value) passes the value as a parameter, so there is no
+    // grammar to escape at all.
+    const like = `%${q.replace(/([\\%_])/g, "\\$1")}%`;
+    const [byName, byEmail] = await Promise.all([base().ilike("name", like), base().ilike("email", like)]);
+    error = byName.error || byEmail.error;
+    const merged = new Map();
+    for (const row of [...(byName.data || []), ...(byEmail.data || [])]) merged.set(row.id, row);
+    users = [...merged.values()].slice(0, MAX_ROWS);
+  } else {
+    const result = await base();
+    users = result.data;
+    error = result.error;
   }
 
-  const { data: users, error } = await query;
   if (error) return res.status(500).json({ error: "Couldn't load users." });
 
   const orgIds = [...new Set((users || []).map((u) => u.orgId).filter(Boolean))];

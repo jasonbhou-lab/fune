@@ -33,9 +33,16 @@ export default function handler(req, res) {
   incoming.searchParams.delete("__p");
   const search = incoming.searchParams.toString();
 
-  // Trim any leading slash from the captured path so the join can't produce
-  // "/api//foo", which Express treats as a different route.
-  const clean = path.replace(/^\/+/, "");
+  // Restrict the captured path to what a route can actually be made of, then
+  // trim leading slashes so the join can't produce "/api//foo", which Express
+  // treats as a different route.
+  //
+  // No bypass was found without this — Express normalises the path and the
+  // validators reject the array values that duplicate query keys produce — but
+  // this value is reconstructed into a URL, and "no bypass found" is a weaker
+  // property than "cannot carry a ? or a #". Anything else is not a path we
+  // serve, so rejecting it costs nothing.
+  const clean = /^[A-Za-z0-9._~\-/%]*$/.test(path) ? path.replace(/^\/+/, "") : "";
 
   req.url = `/api${clean ? `/${clean}` : ""}${search ? `?${search}` : ""}`;
 

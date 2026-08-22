@@ -87,17 +87,33 @@ router.use(requirePortalAccess());
 // change or a lead edit to the provider, which is exactly the record you would
 // want when a provider disputes one.
 //
+// Reads are recorded too, not only writes. This is a cross-tenant read
+// capability: an admin can open any organization's enquiries, which carry a
+// bereaved family's name, phone number, email and circumstances. For that kind
+// of access the read is the sensitive event — "who looked at this family's
+// details" is the question that actually gets asked — and logging only mutations
+// would leave it unanswerable. Enquiry routes are singled out rather than
+// logging every dashboard poll, so the trail stays readable.
+//
 // Logged before the handler runs, so it records the attempt rather than only the
 // successes — the more useful property for an access trail.
+const LEAD_PATH = /^\/leads(\/|$)/;
+
 router.use(async (req, _res, next) => {
-  if (req.method !== "GET" && req.user?.actingAsOrg) {
-    await appendAudit({
-      actor: `${req.user.name} (platform admin)`,
-      action: `admin_portal_${req.method.toLowerCase()}`,
-      entity: req.user.actingAsOrg.id,
-      from: req.user.actingAsOrg.name,
-      to: (req.originalUrl || req.url || "").split("?")[0],
-    });
+  if (req.user?.actingAsOrg) {
+    const path = (req.originalUrl || req.url || "").split("?")[0];
+    const isWrite = req.method !== "GET";
+    const touchesLeads = LEAD_PATH.test(req.path || "");
+
+    if (isWrite || touchesLeads) {
+      await appendAudit({
+        actor: `${req.user.name} (platform admin)`,
+        action: isWrite ? `admin_portal_${req.method.toLowerCase()}` : "admin_portal_read_leads",
+        entity: req.user.actingAsOrg.id,
+        from: req.user.actingAsOrg.name,
+        to: path,
+      });
+    }
   }
   next();
 });

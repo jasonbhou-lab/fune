@@ -205,6 +205,25 @@ router.post("/reviews/:id/report", reportLimiter, optionalAuth, async (req, res)
     .maybeSingle();
   if (findError || !review) return res.status(404).json({ error: "Review not found." });
 
+  // One open report per person per review. Without this, a single account could
+  // file the same complaint repeatedly and bury the moderation queue — and
+  // because a queue full of duplicates looks like a review many people object
+  // to, it also distorts the judgement it exists to inform. Anonymous reports
+  // cannot be deduplicated this way; the per-connection rate limit is all that
+  // bounds those.
+  if (req.user?.id) {
+    const { data: existing } = await supabase
+      .from("review_reports")
+      .select("id")
+      .eq("review_id", review.id)
+      .eq("reporter_id", req.user.id)
+      .eq("status", "open")
+      .maybeSingle();
+    // Same response as a fresh report: whether a previous one is still open is
+    // moderation state, not the reporter's business.
+    if (existing) return res.status(201).json({ ok: true });
+  }
+
   const { error } = await supabase.from("review_reports").insert({
     review_id: review.id,
     reporter_id: req.user?.id || null,
