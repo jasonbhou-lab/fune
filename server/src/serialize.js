@@ -148,20 +148,63 @@ export function ratingSummary(stats) {
 }
 
 /**
+ * Name suffixes, which must not be mistaken for a family name.
+ *
+ * "John Smith Jr." has to abbreviate to "John S.", not "John J.".
+ */
+const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]);
+
+/**
+ * "Jane Smith" -> "Jane S.", for showing on a review.
+ *
+ * A review of a funeral home says something about a death in the reviewer's
+ * own family, so their full surname is not ours to publish next to it.
+ *
+ * The shortening happens here, not in the app, so the surname never leaves the
+ * server: a client that truncated for display would still have received the
+ * whole name in the JSON, where anyone can read it.
+ */
+export function reviewerName(fullName) {
+  const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "Someone";
+
+  const given = parts[0];
+
+  // Walk back past any suffix to find the family name. If that consumes
+  // everything, there is no surname to abbreviate and the given name stands on
+  // its own — "Jane", "Jane Jr.".
+  let last = parts.length - 1;
+  while (last > 0 && NAME_SUFFIXES.has(parts[last].toLowerCase())) last -= 1;
+  if (last === 0) return given;
+
+  // Spread rather than [0], so a surname starting outside the BMP is not cut in
+  // half through a surrogate pair.
+  const initial = [...parts[last]][0];
+  if (!/\p{L}/u.test(initial)) return given; // punctuation is not an initial
+  return `${given} ${initial.toUpperCase()}.`;
+}
+
+/**
  * One review for public display.
  *
- * The author's name comes from their profile, and nothing else about them is
- * included — no email, no id — because this is the most public surface in the
- * product. `mine` lets the app show edit and delete on the viewer's own review
- * without the client having to know any other user's id.
+ * The author is reduced to a first name and last initial, and nothing else
+ * about them is included — no email, no id — because this is the most public
+ * surface in the product. `mine` lets the app show edit and delete on the
+ * viewer's own review without the client having to know any other user's id.
+ *
+ * `revealAuthor` opts back in to the full name, and exists only for the admin
+ * moderation queue, where the point of the screen is to act on the person
+ * behind an abusive review. It is off by default so any new surface gets the
+ * shortened name without having to remember to ask for it.
  */
-export function serializeReview(review, { viewerId = null } = {}) {
+export function serializeReview(review, { viewerId = null, revealAuthor = false } = {}) {
+  const name = review.author?.name;
   return {
     id: review.id,
     orgId: review.orgId,
     rating: review.rating,
     body: review.body || "",
-    authorName: review.author?.name || "Someone",
+    authorName: revealAuthor ? name || "Someone" : reviewerName(name),
     createdAt: review.createdAt,
     // Only meaningful once edited; the app uses it for an "edited" marker.
     edited: Boolean(review.updatedAt && review.createdAt && review.updatedAt !== review.createdAt),

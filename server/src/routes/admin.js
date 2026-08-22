@@ -384,7 +384,9 @@ router.get("/review-reports", async (req, res) => {
       createdAt: r.createdAt,
       review: r.review
         ? {
-            ...serializeReview(r.review),
+            // Moderation: the reviewer's full name stays visible here, because
+            // acting on a report can mean acting on the account behind it.
+            ...serializeReview(r.review, { revealAuthor: true }),
             hidden: r.review.status === "hidden",
             orgId: r.review.org?.id || null,
             orgName: r.review.org?.name || null,
@@ -428,7 +430,9 @@ router.patch("/reviews/:id", async (req, res) => {
     to: reason ? `${status} (${reason})` : status,
   });
 
-  res.json({ ...serializeReview(updated), hidden: updated.status === "hidden" });
+  // Same moderation queue, so the row must not change name format when the
+  // admin hides or restores it.
+  res.json({ ...serializeReview(updated, { revealAuthor: true }), hidden: updated.status === "hidden" });
 });
 
 router.patch("/review-reports/:id", async (req, res) => {
