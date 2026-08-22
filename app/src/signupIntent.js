@@ -17,8 +17,15 @@ const MAX_AGE_MS = 15 * 60 * 1000;
 
 const VALID_TYPES = SELF_SERVICE_ACCOUNT_TYPES.map((t) => t.id);
 
+// Reading then removing from AsyncStorage is two operations, so two concurrent
+// callers can both read the same entry before either removes it — and both then
+// fire the claim, one of which fails. An in-memory latch closes that window,
+// because there is only ever one OAuth return per page load to spend.
+let spent = false;
+
 /** Park the signup answers before handing off to Google. */
 export async function saveSignupIntent({ accountType, orgId = null, orgName = null }) {
+  spent = false;
   try {
     await AsyncStorage.setItem(
       KEY,
@@ -48,6 +55,9 @@ export async function saveSignupIntent({ accountType, orgId = null, orgName = nu
  * hand-edited entry here cannot grant anything the signup form could not.
  */
 export async function takeSignupIntent() {
+  if (spent) return null;
+  spent = true;
+
   let raw = null;
   try {
     raw = await AsyncStorage.getItem(KEY);
@@ -78,6 +88,7 @@ export async function takeSignupIntent() {
 }
 
 export async function clearSignupIntent() {
+  spent = true;
   try {
     await AsyncStorage.removeItem(KEY);
   } catch {

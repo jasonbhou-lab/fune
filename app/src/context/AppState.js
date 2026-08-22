@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Platform } from "react-native";
 import { DEFAULT_FILTERS } from "../attributes";
 import { supabaseAuth, fetchProfile } from "../supabaseClient";
@@ -21,6 +21,11 @@ export { SELF_SERVICE_ACCOUNT_TYPES };
 
 // Provider roles that must hold a second factor before they get in.
 const MFA_REQUIRED_PROVIDER_ROLES = ["owner", "administrator"];
+
+// claim_account_type() raises this when its UPDATE matches no row, meaning the
+// account already has a settled type. Matched on the message because PostgREST
+// does not surface the SQLSTATE for a raised exception.
+const ALREADY_CLAIMED = /already has an account type/i;
 
 export function AppStateProvider({ children }) {
   const [location, setLocation] = useState({ zip: "77494", city: "Katy", state: "TX" });
@@ -81,29 +86,51 @@ export function AppStateProvider({ children }) {
    * rejected, the flag stays set and ChooseRoleScreen asks properly. That is the
    * fallback for every failure here, which is why none of them throw.
    */
-  const resolveProfile = async (userId) => {
-    const profile = await loadProfile(userId);
-    if (!profile?.rolePending) {
-      // This account has already chosen — including any created before the role
-      // prompt existed, which land here as whatever handle_new_user() guessed.
-      // Their answers are not applied, by design, but a leftover intent must not
-      // sit in storage waiting to be spent on some later, unrelated signup in
-      // this browser.
-      await clearSignupIntent();
-      return profile;
-    }
+  // Two effects below both resolve the profile on an OAuth return: the mount
+  // effect once getSession() settles, and the session-arrival effect the moment
+  // onAuthStateChange supplies a session while `user` is still null. They used to
+  // race, and both would take the parked intent and fire the claim — one won, one
+  // raised "This account already has an account type", and whichever setUser
+  // landed last decided what the user saw. When the loser landed last, its stale
+  // role_pending profile put a settled account back on the role prompt.
+  //
+  // Sharing one in-flight promise per user id means the second caller joins the
+  // first instead of starting a second claim.
+  const resolveInFlight = useRef(new Map());
 
-    const intent = await takeSignupIntent();
-    if (!intent) return profile;
+  const resolveProfile = (userId) => {
+    const existing = resolveInFlight.current.get(userId);
+    if (existing) return existing;
 
-    try {
-      const claimed = await claimAccountTypeFor(intent, userId);
-      return claimed || profile;
-    } catch {
-      // Organization deleted since, claim already spent, offline — let the
-      // prompt handle it rather than blocking the sign-in.
-      return profile;
-    }
+    const pending = (async () => {
+      const profile = await loadProfile(userId);
+      if (!profile?.rolePending) {
+        // This account has already chosen — including any created before the role
+        // prompt existed, which land here as whatever handle_new_user() guessed.
+        // Their answers are not applied, by design, but a leftover intent must
+        // not sit in storage waiting to be spent on some later, unrelated signup
+        // in this browser.
+        await clearSignupIntent();
+        return profile;
+      }
+
+      const intent = await takeSignupIntent();
+      if (!intent) return profile;
+
+      try {
+        const claimed = await claimAccountTypeFor(intent, userId);
+        return claimed || profile;
+      } catch {
+        // Organization deleted since, offline — let the prompt handle it rather
+        // than blocking the sign-in. "Already has an account type" no longer
+        // arrives here; claimAccountTypeFor treats it as success.
+        return profile;
+      }
+    })();
+
+    resolveInFlight.current.set(userId, pending);
+    pending.finally(() => resolveInFlight.current.delete(userId));
+    return pending;
   };
 
   useEffect(() => {
@@ -359,7 +386,14 @@ export function AppStateProvider({ children }) {
       p_org_id: accountType === "provider" ? orgId || null : null,
       p_org_name: accountType === "provider" && !orgId ? orgName || null : null,
     });
-    if (error) throw new Error(error.message);
+
+    // "Already has an account type" is not a failure worth showing anyone: the
+    // account is settled, which is the whole point of the call. It means something
+    // else got there first — a concurrent resolve, a double press, or an account
+    // that predates the prompt. Showing it stranded the user on a form that could
+    // never succeed, so load the settled profile and let the navigator route.
+    if (error && !ALREADY_CLAIMED.test(error.message || "")) throw new Error(error.message);
+
     return userId ? await loadProfile(userId) : null;
   };
 
