@@ -68,15 +68,15 @@ export function Wordmark({ onDark = false, style }) {
   const nameColor = onDark ? colors.primaryInk : colors.ink;
   const taglineColor = onDark ? "rgba(255,255,255,0.78)" : colors.accent;
   return (
-    <View style={[{ flexDirection: "row", alignItems: "center", gap: spacing.sm }, style]}>
-      <Image source={crest} style={{ width: 40, height: 40 }} resizeMode="contain" />
-      <View>
-        <Text style={{ fontFamily: fonts.serifBold, fontSize: 22, color: nameColor, letterSpacing: 0.1 }}>
+    <View style={[{ alignItems: "center", gap: spacing.xs }, style]}>
+      <Image source={crest} style={{ width: 96, height: 96 }} resizeMode="contain" />
+      <View style={{ alignItems: "center" }}>
+        <Text style={{ fontFamily: fonts.serifBold, fontSize: 26, color: nameColor, letterSpacing: 0.1 }}>
           The Final Choice
         </Text>
         <Text
           style={{
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: "600",
             color: taglineColor,
             letterSpacing: 1.6,
