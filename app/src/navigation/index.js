@@ -44,7 +44,7 @@ const stackOptions = {
 function SearchStackNavigator() {
   return (
     <SearchStack.Navigator initialRouteName="Welcome" screenOptions={stackOptions}>
-      <SearchStack.Screen name="Welcome" component={WelcomeScreen} options={{ title: "GLP" }} />
+      <SearchStack.Screen name="Welcome" component={WelcomeScreen} options={{ title: "The Final Choice" }} />
       <SearchStack.Screen name="Categories" component={CategoriesScreen} options={{ title: "Browse by category" }} />
       <SearchStack.Screen name="Results" component={SearchResultsScreen} options={{ title: "Search results" }} />
       <SearchStack.Screen name="Filters" component={FiltersScreen} options={{ title: "Filters" }} />

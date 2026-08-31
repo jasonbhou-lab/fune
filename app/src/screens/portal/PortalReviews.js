@@ -127,7 +127,7 @@ export default function PortalReviews({ token, actAsOrg}) {
               }
               right={
                 review.hidden ? (
-                  <Badge label="Removed by GLP" tone="danger" />
+                  <Badge label="Removed by moderators" tone="danger" />
                 ) : review.needsResponse ? (
                   <Badge label="No reply" tone="warn" />
                 ) : (

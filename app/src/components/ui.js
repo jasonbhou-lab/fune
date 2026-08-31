@@ -1,7 +1,9 @@
 import React from "react";
-import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
-import { colors, spacing } from "../theme";
+import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, ScrollView, Image } from "react-native";
+import { colors, spacing, fonts } from "../theme";
 import { useContentWidth, useScrollLayout } from "../responsive";
+
+const crest = require("../../assets/brand-crest.png");
 
 // react-navigation's native-stack renders each screen as a viewport-fixed
 // overlay on web (a react-native-screens quirk that ignores any width
@@ -45,6 +47,46 @@ export function ScrollScreen({ children, contentStyle, style, wide = false, ...s
       <ScrollView style={layout.scroller} contentContainerStyle={[layout.content, contentStyle]} {...scrollProps}>
         {children}
       </ScrollView>
+    </View>
+  );
+}
+
+/**
+ * The brand lockup: the crest (a gold ring around a tree growing from a heart
+ * cradled in two hands), the serif wordmark, and the tagline. Three screens
+ * (Welcome, sign-in, the post-Google role prompt) each used to hand-roll this
+ * as two <Text> lines — pulled into one component so the mark and the copy
+ * only exist in one place.
+ *
+ * The crest's own colors (navy hands, sage-green canopy, gold heart and ring)
+ * are baked into brand-crest.png and don't change with `onDark` — they were
+ * chosen to hold up against both the plain cream background and the
+ * primary→accent gradient hero. Only the wordmark and tagline text recolor
+ * for the gradient, where dark ink would disappear.
+ */
+export function Wordmark({ onDark = false, style }) {
+  const nameColor = onDark ? colors.primaryInk : colors.ink;
+  const taglineColor = onDark ? "rgba(255,255,255,0.78)" : colors.accent;
+  return (
+    <View style={[{ flexDirection: "row", alignItems: "center", gap: spacing.sm }, style]}>
+      <Image source={crest} style={{ width: 40, height: 40 }} resizeMode="contain" />
+      <View>
+        <Text style={{ fontFamily: fonts.serifBold, fontSize: 22, color: nameColor, letterSpacing: 0.1 }}>
+          The Final Choice
+        </Text>
+        <Text
+          style={{
+            fontSize: 10,
+            fontWeight: "600",
+            color: taglineColor,
+            letterSpacing: 1.6,
+            textTransform: "uppercase",
+            marginTop: 2,
+          }}
+        >
+          Plan with peace
+        </Text>
+      </View>
     </View>
   );
 }
@@ -176,13 +218,13 @@ const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 12,
+    borderRadius: 18,
     backgroundColor: colors.bgCard,
     padding: spacing.md,
   },
   btn: {
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: 14,
+    paddingVertical: 14,
     paddingHorizontal: spacing.lg,
     alignItems: "center",
     justifyContent: "center",
@@ -210,20 +252,20 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     fontSize: 14,
     color: colors.ink,
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.bgSunk,
   },
   errorText: { color: colors.danger, fontSize: 11, marginTop: 4 },
-  banner: { borderRadius: 10, padding: 10, marginVertical: spacing.sm },
+  banner: { borderRadius: 12, padding: 12, marginVertical: spacing.sm },
   checkboxRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: spacing.sm },
   checkbox: {
     width: 18,
     height: 18,
-    borderRadius: 4,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: colors.line,
     marginRight: 8,

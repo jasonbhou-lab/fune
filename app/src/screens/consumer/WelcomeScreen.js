@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
-import { Screen, ScrollScreen, TextField, PrimaryButton, SecondaryButton } from "../../components/ui";
+import { Screen, ScrollScreen, TextField, PrimaryButton, SecondaryButton, Wordmark } from "../../components/ui";
 import { useAppState } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
 
 const NEED_OPTIONS = [
-  { id: "immediate_need", label: "Immediate need" },
-  { id: "planning_ahead", label: "Planning ahead" },
-  { id: "research", label: "Just researching" },
+  { id: "immediate_need", label: "Immediate need", icon: "🕊" },
+  { id: "planning_ahead", label: "Planning ahead", icon: "🗓" },
+  { id: "research", label: "Just researching", icon: "🔍" },
 ];
 
 export default function WelcomeScreen({ navigation }) {
@@ -21,30 +21,47 @@ export default function WelcomeScreen({ navigation }) {
 
   return (
     <ScrollScreen contentStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-        <Text style={type.display}>GLP</Text>
-        <Text style={[type.caption, { marginTop: 4, marginBottom: spacing.xl }]}>Compare with clarity.</Text>
+        <Wordmark style={{ marginBottom: spacing.xl }} />
 
         <TextField label="ZIP or city" value={zip} onChangeText={setZip} placeholder="77494" keyboardType="number-pad" />
 
         <Text style={[type.label, { marginBottom: spacing.sm }]}>What brings you here today?</Text>
-        {NEED_OPTIONS.map((opt) => (
-          <Pressable
-            key={opt.id}
-            onPress={() => setNeedType(opt.id)}
-            style={{
-              borderWidth: 1,
-              borderColor: needType === opt.id ? colors.accent : colors.line,
-              backgroundColor: needType === opt.id ? colors.accentSoft : colors.bgCard,
-              borderRadius: 10,
-              padding: 12,
-              marginBottom: spacing.sm,
-            }}
-          >
-            <Text style={{ color: needType === opt.id ? colors.accent : colors.muted, fontWeight: needType === opt.id ? "700" : "500" }}>
-              {opt.label}
-            </Text>
-          </Pressable>
-        ))}
+        {NEED_OPTIONS.map((opt) => {
+          const active = needType === opt.id;
+          return (
+            <Pressable
+              key={opt.id}
+              onPress={() => setNeedType(opt.id)}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.md,
+                borderWidth: active ? 2 : 1,
+                borderColor: active ? colors.accent : colors.line,
+                backgroundColor: active ? colors.accentSoft : colors.bgCard,
+                borderRadius: 16,
+                padding: 12,
+                marginBottom: spacing.sm,
+              }}
+            >
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor: active ? colors.bgCard : colors.sageSoft,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ fontSize: 16 }}>{opt.icon}</Text>
+              </View>
+              <Text style={{ color: active ? colors.navy : colors.muted, fontWeight: active ? "700" : "500", fontSize: 14 }}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
 
         <View style={{ flex: 1 }} />
 

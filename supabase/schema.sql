@@ -1,4 +1,4 @@
--- GLP — Supabase schema
+-- The Final Choice — Supabase schema
 -- Run this once in your project's SQL Editor (or via `supabase db push` if you
 -- manage migrations with the Supabase CLI). Safe to re-run: uses IF NOT EXISTS
 -- / CREATE OR REPLACE where practical, but table creation will error if the

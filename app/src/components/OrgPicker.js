@@ -118,7 +118,7 @@ export default function OrgPicker({ value, onChange, labelColor, onGradientMuted
       ) : null}
 
       {orgs.map((org) =>
-        row(org.id, org.name, org.verified ? "Verified on GLP" : "Not yet verified", selectedId === org.id, () => choose(org))
+        row(org.id, org.name, org.verified ? "Verified on The Final Choice" : "Not yet verified", selectedId === org.id, () => choose(org))
       )}
 
       {row(

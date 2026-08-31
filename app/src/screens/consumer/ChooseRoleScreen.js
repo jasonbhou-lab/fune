@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { PrimaryButton, Banner, Card } from "../../components/ui";
+import { PrimaryButton, Banner, Card, Wordmark } from "../../components/ui";
 import OrgPicker from "../../components/OrgPicker";
 import { useAppState, SELF_SERVICE_ACCOUNT_TYPES } from "../../context/AppState";
 import { colors, spacing, type } from "../../theme";
@@ -62,8 +62,7 @@ export default function ChooseRoleScreen() {
         contentContainerStyle={[{ flexGrow: 1, padding: spacing.lg, paddingTop: spacing.xxl, width: "100%" }, contentWidth]}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={[type.display, onGradient]}>GLP</Text>
-        <Text style={[type.caption, onGradientMuted, { marginTop: 4, marginBottom: spacing.xl }]}>Compare with clarity.</Text>
+        <Wordmark onDark style={{ marginBottom: spacing.xl }} />
 
         <Text style={[type.h2, onGradient, { marginBottom: spacing.md }]}>One more thing</Text>
         {error ? <Banner tone="danger">{error}</Banner> : null}
