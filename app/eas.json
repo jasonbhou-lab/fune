@@ -1,8 +1,17 @@
 {
   "cli": {
-    "version": ">= 21.8.0"
+    "version": ">= 21.8.0",
+    // EAS keeps the Android versionCode and iOS buildNumber on its servers and
+    // hands out the next one per build. app.json sets neither, so with "local"
+    // every build would carry versionCode 1 / buildNumber 1, and both stores
+    // reject a second upload that reuses a version already seen.
+    "appVersionSource": "remote"
   },
   "build": {
+    // The development profiles talk to a Metro server on the build machine, so
+    // they deliberately set no API base: src/config.js derives the dev
+    // machine's LAN address from the URL that served the bundle. Setting it
+    // here would point a debug build at production data.
     "development": {
       "developmentClient": true,
       "distribution": "internal",
@@ -27,9 +36,37 @@
         "simulator": true
       }
     },
+
+    // Release JavaScript pointed at the live API, but installable without a
+    // store listing — this is the profile to test a real build with.
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://fune-eight.vercel.app/api"
+      },
+      "android": {
+        // An .aab can only be installed through Play. An .apk sideloads onto a
+        // device directly, which is what makes this profile testable.
+        "buildType": "apk"
+      }
     },
-    "production": {}
+
+    "production": {
+      // app/.env is gitignored, so it never reaches an EAS worker. Without this
+      // the released app falls back to http://localhost:4000/api — which on a
+      // phone means the phone itself — and every screen fails to load.
+      //
+      // EXPO_PUBLIC_* values are inlined into the JavaScript bundle and are
+      // readable by anyone who unzips the app. This URL is public anyway; a
+      // real secret must never be set this way.
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://fune-eight.vercel.app/api"
+      },
+      "autoIncrement": true,
+      "android": {
+        // What Play Store submissions take.
+        "buildType": "app-bundle"
+      }
+    }
   }
 }
