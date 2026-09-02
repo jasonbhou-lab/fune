@@ -10,4 +10,5 @@ export const CATEGORIES = [
   { id: "memorialization", label: "Memorials", examples: "Markers, engraving" },
   { id: "planning_support", label: "Planning", examples: "Pre-need, referrals" },
   { id: "addons_third_party", label: "Add-ons", examples: "Flowers, permits" },
+  { id: "legal_estate_planning", label: "Legal & estate", examples: "Wills, trusts" },
 ];

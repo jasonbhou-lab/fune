@@ -95,6 +95,17 @@ export default function CategoryIcon({ id, size = 18, color = "#3E5C55" }) {
           <Path d="M12 15v6" {...s} />
         </Svg>
       );
+    case "legal_estate_planning":
+      // A document with a seal, reading as a will or trust rather than the
+      // more common scales-of-justice mark — this category is about estate
+      // paperwork, not litigation.
+      return (
+        <Svg {...box}>
+          <Rect x="6" y="3" width="12" height="15" rx="1.5" {...s} />
+          <Path d="M9 7.5h6M9 11h6" {...s} />
+          <Circle cx="12" cy="18" r="2.2" {...s} />
+        </Svg>
+      );
     default:
       return (
         <Svg {...box}>
