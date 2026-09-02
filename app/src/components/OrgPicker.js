@@ -92,7 +92,7 @@ export default function OrgPicker({ value, onChange, labelColor, onGradientMuted
       </Text>
 
       <TextField
-        label="Search funeral homes"
+        label="Search organizations"
         value={query}
         onChangeText={setQuery}
         placeholder="Start typing a name"
@@ -137,7 +137,7 @@ export default function OrgPicker({ value, onChange, labelColor, onGradientMuted
             setNewOrgName(text);
             onChange({ orgId: null, orgName: text.trim() });
           }}
-          placeholder="e.g. Sunset Rest Funeral Home"
+          placeholder="Your organization's name"
           labelColor={labelColor}
         />
       ) : null}

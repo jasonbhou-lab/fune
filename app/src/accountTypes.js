@@ -9,5 +9,5 @@
 // it too, and importing AppState from there would be a cycle.
 export const SELF_SERVICE_ACCOUNT_TYPES = [
   { id: "consumer", label: "I'm planning or arranging a funeral" },
-  { id: "provider", label: "I work for a funeral home or provider" },
+  { id: "provider", label: "I work for a provider organization" },
 ];

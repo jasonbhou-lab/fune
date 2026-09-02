@@ -113,7 +113,7 @@ export default function PortalHomeScreen({ navigation }) {
               ) : providerUser?.orgClaimStatus === "rejected" ? (
                 "Your request to join an organization wasn't approved. If you believe that's a mistake, contact us and we'll take another look."
               ) : (
-                "Your provider account isn't linked to an organization yet, so there are no locations, listings, or leads to show. A platform administrator needs to connect it to your funeral home before the portal becomes useful."
+                "Your provider account isn't linked to an organization yet, so there are no locations, listings, or leads to show. A platform administrator needs to connect it to your organization before the portal becomes useful."
               )}
             </Text>
             <Text style={[type.caption, { marginTop: spacing.md }]}>
